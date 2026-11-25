@@ -5,6 +5,7 @@ import {
   Activity,
   Database,
   GraduationCap,
+  History,
   RotateCcw,
   Sparkles,
 } from "lucide-react";
@@ -13,6 +14,7 @@ import { ConstraintSidebar } from "@/components/ConstraintSidebar";
 import { PriorityStudyMap } from "@/components/PriorityStudyMap";
 import { StudyWorkspace } from "@/components/StudyWorkspace";
 import { SubjectSummaryView } from "@/components/SubjectSummaryView";
+import { StudyHistoryDrawer } from "@/components/StudyHistoryDrawer";
 import {
   WorkflowProgressBar,
   type WorkflowStageId,
@@ -32,9 +34,12 @@ import type {
   IngestResponse,
   LearningStyle,
   PrioritizeResponse,
+  StudyHistoryEntry,
   StudyPackResponse,
   SubjectSummaryResponse,
 } from "@/types/exampulse";
+
+const HISTORY_STORAGE_KEY = "exampulse_history";
 
 export default function ExamPulsePage() {
   const [health, setHealth] = useState<BackendHealth | null>(null);
@@ -48,6 +53,8 @@ export default function ExamPulsePage() {
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [studyPackCache, setStudyPackCache] = useState<Record<string, StudyPackResponse>>({});
   const [subjectSummary, setSubjectSummary] = useState<SubjectSummaryResponse | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<StudyHistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
   const [traceDrawerOpen, setTraceDrawerOpen] = useState<boolean>(false);
 
   const [isIngesting, setIsIngesting] = useState(false);
@@ -62,6 +69,64 @@ export default function ExamPulsePage() {
       .then(setHealth)
       .catch(() => setHealth(null));
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const sorted = [...parsed].sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        );
+        setHistoryEntries(sorted);
+      }
+    } catch {
+      // Ignore corrupt localStorage entries
+    }
+  }, []);
+
+  const persistHistory = (next: StudyHistoryEntry[]) => {
+    const sorted = [...next].sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    setHistoryEntries(sorted);
+    try {
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(sorted));
+    } catch {
+      // Ignore storage quota errors
+    }
+  };
+
+  const saveSummaryToHistory = (
+    res: SubjectSummaryResponse,
+    style: LearningStyle,
+    hours: number
+  ) => {
+    const entry: StudyHistoryEntry = {
+      id: `${res.session_id}-${Date.now()}`,
+      subjectTitle: res.subject_title,
+      timestamp: new Date().toISOString(),
+      learningStyle: style,
+      hoursBudget: hours,
+      unitsCount: res.unit_keypoints.length,
+      summaryData: res,
+    };
+    setHistoryEntries((prev) => {
+      const filtered = prev.filter(
+        (item) => item.summaryData.session_id !== res.session_id
+      );
+      const next = [entry, ...filtered];
+      try {
+        window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Ignore storage quota errors
+      }
+      return next;
+    });
+  };
 
   const handleIngest = async (syllabusPdf: File, pyqPdfs: File[]) => {
     setError(null);
@@ -174,7 +239,12 @@ export default function ExamPulsePage() {
   };
 
   const handleOpenSubjectSummary = async (forceRefresh = false) => {
-    if (!session) return;
+    if (!session) {
+      if (forceRefresh) {
+        setError("Viewing an offline saved summary. Load a session or demo to regenerate live.");
+      }
+      return;
+    }
     setActiveStep(5);
     if (!forceRefresh && subjectSummary && subjectSummary.session_id === session.session_id) {
       return;
@@ -189,6 +259,7 @@ export default function ExamPulsePage() {
         hours_remaining: hoursRemaining,
       });
       setSubjectSummary(res);
+      saveSummaryToHistory(res, learningStyle, hoursRemaining);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to generate subject summary."
@@ -196,6 +267,23 @@ export default function ExamPulsePage() {
     } finally {
       setIsGeneratingSummary(false);
     }
+  };
+
+  const handleOpenHistoryEntry = (entry: StudyHistoryEntry) => {
+    setError(null);
+    setSubjectSummary(entry.summaryData);
+    setHoursRemaining(entry.hoursBudget);
+    setLearningStyle(entry.learningStyle);
+    setActiveStep(5);
+    setHistoryOpen(false);
+  };
+
+  const handleDeleteHistoryEntry = (id: string) => {
+    persistHistory(historyEntries.filter((e) => e.id !== id));
+  };
+
+  const handleClearHistory = () => {
+    persistHistory([]);
   };
 
   const handleToggleTopic = (topic: string) => {
@@ -311,6 +399,15 @@ export default function ExamPulsePage() {
               <Badge tone="coral">Backend Offline (Start :8000)</Badge>
             )}
 
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHistoryOpen(true)}
+            >
+              <History className="h-3.5 w-3.5 text-[#E17055]" />
+              History ({historyEntries.length})
+            </Button>
+
             {session && (
               <Button variant="outline" size="sm" onClick={handleReset}>
                 <RotateCcw className="h-3.5 w-3.5" />
@@ -397,10 +494,21 @@ export default function ExamPulsePage() {
             summary={subjectSummary}
             isLoading={isGeneratingSummary}
             onRegenerate={() => handleOpenSubjectSummary(true)}
-            onBack={() => setActiveStep(selectedTopic ? 4 : 3)}
+            onBack={() =>
+              setActiveStep(!session ? 1 : selectedTopic ? 4 : 3)
+            }
           />
         )}
       </main>
+
+      <StudyHistoryDrawer
+        open={historyOpen}
+        entries={historyEntries}
+        onClose={() => setHistoryOpen(false)}
+        onOpenEntry={handleOpenHistoryEntry}
+        onDeleteEntry={handleDeleteHistoryEntry}
+        onClearAll={handleClearHistory}
+      />
     </div>
   );
 }

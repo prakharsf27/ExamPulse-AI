@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from ingest import ingest_dual_pdfs, ingest_dual_texts, ingestion_engine
 from workflow import (
+    DoubtSource,
     LearningStyle,
     ParsedSyllabus,
     PrioritizedTopic,
@@ -28,6 +29,7 @@ from workflow import (
     WorkedExample,
     WorkflowTraceEntry,
     agentic_rag_graph,
+    ask_doubt_pipeline,
     generate_subject_summary_pipeline,
     make_trace,
 )
@@ -106,6 +108,19 @@ class EmailSummaryRequest(BaseModel):
     subject_title: str
     summary_data: Optional[SubjectSummaryData] = None
     full_markdown: Optional[str] = None
+
+
+class AskDoubtRequest(BaseModel):
+    session_id: str
+    topic: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=2)
+
+
+class AskDoubtResponse(BaseModel):
+    answer: str
+    grounded: bool
+    model_used: str
+    sources: List[DoubtSource] = Field(default_factory=list)
 
 
 DEMO_OS_SYLLABUS = """
@@ -575,6 +590,23 @@ def email_summary_endpoint(req: EmailSummaryRequest) -> Dict[str, str]:
 
         return {"status": "sent", "recipient": recipient}
 
+
+@app.post("/api/ask-doubt", response_model=AskDoubtResponse)
+def ask_doubt_endpoint(req: AskDoubtRequest) -> AskDoubtResponse:
+    session = SESSION_STORE.get(req.session_id)
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found. Upload PDFs or load the demo first.",
+        )
+
+    result = ask_doubt_pipeline(
+        session_id=req.session_id,
+        topic=req.topic,
+        question=req.question,
+    )
+    return AskDoubtResponse(**result)
+
     if not smtp_email or not smtp_password:
         raise HTTPException(
             status_code=400,
@@ -604,3 +636,20 @@ def email_summary_endpoint(req: EmailSummaryRequest) -> Dict[str, str]:
         ) from exc
 
     return {"status": "sent", "recipient": recipient}
+
+
+@app.post("/api/ask-doubt", response_model=AskDoubtResponse)
+def ask_doubt_endpoint(req: AskDoubtRequest) -> AskDoubtResponse:
+    session = SESSION_STORE.get(req.session_id)
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found. Upload PDFs or load the demo first.",
+        )
+
+    result = ask_doubt_pipeline(
+        session_id=req.session_id,
+        topic=req.topic,
+        question=req.question,
+    )
+    return AskDoubtResponse(**result)

@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   ChevronDown,
   ChevronUp,
   Clock,
@@ -107,6 +108,87 @@ export function PriorityStudyMap({
           </div>
         </CardHeader>
       </Card>
+
+      {/* PYQ Weightage & Time Allocation Visual Chart */}
+      {plan.prioritized_topics.length > 0 && (
+        <Card className="border-[#1E3A8A]/15 bg-white">
+          <CardHeader className="border-b border-slate-100 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="flex items-center gap-2 text-sm text-[#1E3A8A]">
+                <BarChart3 className="h-4 w-4 text-[#E17055]" />
+                PYQ Weightage &amp; Time Allocation Chart (Top Topics)
+              </CardTitle>
+              <div className="flex items-center gap-4 text-[11px] font-semibold text-slate-600">
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#E17055]" />
+                  PYQ Recurrence
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#1E3A8A]" />
+                  Allocated Hours
+                </span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2.5 py-4">
+            {(() => {
+              const chartTopics = plan.prioritized_topics.slice(0, 6);
+              const maxFreq = Math.max(
+                1,
+                ...chartTopics.map((t) => t.pyq_frequency)
+              );
+              const maxHours = Math.max(
+                0.5,
+                ...chartTopics.map((t) => t.allocated_hours)
+              );
+
+              return chartTopics.map((t) => {
+                const freqPct = Math.round((t.pyq_frequency / maxFreq) * 100);
+                const hrsPct = Math.round((t.allocated_hours / maxHours) * 100);
+                return (
+                  <button
+                    key={t.topic}
+                    type="button"
+                    disabled={isGeneratingTopic !== null}
+                    onClick={() => onSelectTopic(t.topic)}
+                    className="grid w-full grid-cols-12 items-center gap-3 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-[#FFFCF5]"
+                  >
+                    <div className="col-span-12 truncate text-xs font-semibold text-slate-800 sm:col-span-5">
+                      <span className="mr-1.5 font-mono text-[11px] font-bold text-[#1E3A8A]">
+                        #{t.priority_rank}
+                      </span>
+                      {t.topic}
+                    </div>
+                    <div className="col-span-9 space-y-1 sm:col-span-5">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-[#E17055] transition-all"
+                          style={{ width: `${Math.max(freqPct, 6)}%` }}
+                        />
+                      </div>
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-[#1E3A8A] transition-all"
+                          style={{ width: `${Math.max(hrsPct, 8)}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="col-span-3 text-right font-mono text-[11px] sm:col-span-2">
+                      <span className="font-bold text-[#C85A40]">
+                        {t.pyq_frequency}x
+                      </span>{" "}
+                      <span className="text-slate-400">·</span>{" "}
+                      <span className="font-bold text-[#1E3A8A]">
+                        {t.allocated_hours}h
+                      </span>
+                    </div>
+                  </button>
+                );
+              });
+            })()}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Clean 2-Column Ranked Topic Grid */}
       <div className="grid gap-4 md:grid-cols-2">

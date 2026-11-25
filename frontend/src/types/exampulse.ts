@@ -146,3 +146,27 @@ export interface EmailSummaryResponse {
   status: string;
   recipient: string;
 }
+
+export interface StudyHistoryEntry {
+  id: string;
+  subjectTitle: string;
+  timestamp: string;
+  learningStyle: LearningStyle;
+  hoursBudget: number;
+  unitsCount: number;
+  summaryData: SubjectSummaryResponse;
+}
+
+export interface DoubtSource {
+  source: string;
+  score: number;
+  text: string;
+  paper_name?: string;
+}
+
+export interface AskDoubtResponse {
+  answer: string;
+  grounded: boolean;
+  model_used: string;
+  sources: DoubtSource[];
+}

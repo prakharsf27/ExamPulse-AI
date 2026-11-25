@@ -104,6 +104,18 @@ class SubjectSummaryData(BaseModel):
     full_markdown: str = ""
 
 
+class DoubtSource(BaseModel):
+    source: str
+    score: float
+    text: str
+    paper_name: str = ""
+
+
+class DoubtAnswerData(BaseModel):
+    grounded: bool
+    answer: str
+
+
 class RetrievedSource(BaseModel):
     source: Literal["syllabus", "pyq"]
     paper_name: str
@@ -1245,3 +1257,141 @@ def generate_subject_summary_pipeline(
             logger.warning("Gemini subject summary (%s) failed (%s)", gen_model, exc)
 
     return _fallback_subject_summary(syllabus, prioritized_topics or []), "Local Grounded Fallback"
+
+
+# ---------------------------------------------------------------------------
+# Strict RAG "Ask a Doubt" Pipeline
+# ---------------------------------------------------------------------------
+
+OUT_OF_SYLLABUS_MSG = (
+    "Out of Syllabus: This question is not covered in your uploaded syllabus or PYQs."
+)
+
+
+def ask_doubt_pipeline(
+    session_id: str,
+    topic: str,
+    question: str,
+) -> Dict[str, Any]:
+    """Answer a student doubt strictly from top-k=4 Qdrant chunks for the session."""
+    query = f"{topic}: {question}".strip()
+    hits = ingestion_engine.search(session_id=session_id, query=query, source=None, k=4)
+
+    sources: List[DoubtSource] = []
+    context_lines: List[str] = []
+    for i, (doc, score) in enumerate(hits, 1):
+        src_label = str(doc.metadata.get("source", "syllabus")).upper()
+        paper_name = str(doc.metadata.get("paper_name", ""))
+        clean_text = re.sub(r"\s+", " ", doc.page_content).strip()
+        sources.append(
+            DoubtSource(
+                source=src_label,
+                score=round(float(max(0.0, min(score, 1.0))), 3),
+                text=clean_text[:340],
+                paper_name=paper_name,
+            )
+        )
+        context_lines.append(f"[{src_label} #{i} | {paper_name}]\n{doc.page_content}")
+
+    if not hits:
+        return {
+            "answer": OUT_OF_SYLLABUS_MSG,
+            "grounded": False,
+            "model_used": "Strict Grounding Guard",
+            "sources": [],
+        }
+
+    # Check lexical overlap + vector similarity as a pre-guardrail signal
+    q_keywords = _extract_keywords(question)
+    combined_chunks_low = " ".join(d.page_content.lower() for d, _ in hits)
+    kw_matches = sum(1 for kw in q_keywords if kw in combined_chunks_low)
+    top_vec_score = max(float(s) for _, s in hits)
+
+    context_block = "\n\n".join(context_lines)
+    prompt_msgs = [
+        SystemMessage(
+            content=(
+                "You are ExamPulse AI, a strictly syllabus-grounded university exam tutor. "
+                "Answer the student's question in 3 to 5 crisp, exam-ready lines using ONLY "
+                "the retrieved syllabus and PYQ chunks below. "
+                "CRITICAL RULE: If the student's question is unrelated to the retrieved chunks "
+                "or asks about facts/events/topics not present in the chunks (for example sports, "
+                "politics, pop culture, or an unmentioned topic), you MUST set grounded=false and "
+                f'set answer to "{OUT_OF_SYLLABUS_MSG}". '
+                "Return ONLY valid JSON: {\"grounded\": true/false, \"answer\": \"...\"}."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Active Topic: {topic}\n"
+                f"Student Question: {question}\n\n"
+                f"RETRIEVED CHUNKS:\n{context_block}"
+            )
+        ),
+    ]
+
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        for groq_model in _get_groq_candidate_models(groq_key):
+            llm = _get_groq_llm(model_name=groq_model, temperature=0.1, timeout=20)
+            if llm is None:
+                continue
+            try:
+                resp = llm.invoke(prompt_msgs)
+                parsed = json.loads(_strip_json_fences(str(resp.content)))
+                data = DoubtAnswerData(**parsed)
+                if not data.grounded:
+                    return {
+                        "answer": OUT_OF_SYLLABUS_MSG,
+                        "grounded": False,
+                        "model_used": f"Groq ({groq_model})",
+                        "sources": sources,
+                    }
+                return {
+                    "answer": data.answer.strip(),
+                    "grounded": True,
+                    "model_used": f"Groq ({groq_model})",
+                    "sources": sources,
+                }
+            except Exception as exc:
+                logger.warning("Groq ask_doubt (%s) failed (%s)", groq_model, exc)
+
+    gen_model = os.getenv("GEMINI_GENERATOR_MODEL", "gemini-3.5-flash-lite")
+    if gen_model == "gemini-3.8-flash":
+        gen_model = "gemini-3.5-flash-lite"
+    gemini_llm = _get_gemini_llm(gen_model, temperature=0.1, timeout=25)
+    if gemini_llm is not None:
+        try:
+            structured = gemini_llm.with_structured_output(DoubtAnswerData, method="json_schema")
+            data = structured.invoke(prompt_msgs)
+            if not data.grounded:
+                return {
+                    "answer": OUT_OF_SYLLABUS_MSG,
+                    "grounded": False,
+                    "model_used": f"Gemini ({gen_model})",
+                    "sources": sources,
+                }
+            return {
+                "answer": data.answer.strip(),
+                "grounded": True,
+                "model_used": f"Gemini ({gen_model})",
+                "sources": sources,
+            }
+        except Exception as exc:
+            logger.warning("Gemini ask_doubt (%s) failed (%s)", gen_model, exc)
+
+    # Deterministic fallback if no LLM available
+    if kw_matches == 0 and top_vec_score < 0.35:
+        return {
+            "answer": OUT_OF_SYLLABUS_MSG,
+            "grounded": False,
+            "model_used": "Local Grounded Fallback",
+            "sources": sources,
+        }
+
+    return {
+        "answer": f"Based on your retrieved syllabus & PYQs for {topic}: {sources[0].text}",
+        "grounded": True,
+        "model_used": "Local Grounded Fallback",
+        "sources": sources,
+    }

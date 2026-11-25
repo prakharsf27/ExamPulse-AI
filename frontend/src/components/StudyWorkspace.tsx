@@ -20,8 +20,11 @@ import {
   FileSpreadsheet,
   HelpCircle,
   Loader2,
+  MessageCircleQuestion,
   Printer,
   RefreshCw,
+  Send,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -32,8 +35,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/controls";
 import { NotesAudioPlayer } from "@/components/NotesAudioPlayer";
+import { askDoubt } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { StudyPackResponse } from "@/types/exampulse";
+import type { AskDoubtResponse, StudyPackResponse } from "@/types/exampulse";
+
+interface DoubtTurn {
+  question: string;
+  response: AskDoubtResponse;
+}
 
 interface StudyWorkspaceProps {
   studyPack: StudyPackResponse | null;
@@ -64,6 +73,11 @@ export function StudyWorkspace({
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [localTraceOpen, setLocalTraceOpen] = useState(false);
+  const [doubtInput, setDoubtInput] = useState("");
+  const [doubtThread, setDoubtThread] = useState<DoubtTurn[]>([]);
+  const [isAskingDoubt, setIsAskingDoubt] = useState(false);
+  const [doubtError, setDoubtError] = useState<string | null>(null);
+  const [openDoubtSources, setOpenDoubtSources] = useState<Record<number, boolean>>({});
 
   const isTraceOpen =
     traceDrawerOpen !== undefined ? traceDrawerOpen : localTraceOpen;
@@ -78,6 +92,10 @@ export function StudyWorkspace({
     setQuizSubmitted(false);
     setOpenSolutions({ 0: true });
     setOpenTwists({});
+    setDoubtInput("");
+    setDoubtThread([]);
+    setDoubtError(null);
+    setOpenDoubtSources({});
     setActiveTab("notes");
   }, [studyPack?.topic, studyPack?.learning_style]);
 
@@ -162,6 +180,29 @@ export function StudyWorkspace({
   const handlePrintPdf = () => {
     setActiveTab("cheatsheet");
     setTimeout(() => window.print(), 120);
+  };
+
+  const handleAskDoubtSubmit = async (questionText: string) => {
+    const q = questionText.trim();
+    if (!q || !studyPack) return;
+
+    setIsAskingDoubt(true);
+    setDoubtError(null);
+    try {
+      const res = await askDoubt({
+        session_id: studyPack.session_id,
+        topic: studyPack.topic,
+        question: q,
+      });
+      setDoubtThread((prev) => [...prev, { question: q, response: res }]);
+      setDoubtInput("");
+    } catch (err) {
+      setDoubtError(
+        err instanceof Error ? err.message : "Failed to answer doubt."
+      );
+    } finally {
+      setIsAskingDoubt(false);
+    }
   };
 
   return (
@@ -350,6 +391,10 @@ export function StudyWorkspace({
               <TabsTrigger value="cheatsheet">
                 <FileSpreadsheet className="h-4 w-4" />
                 1-Page Cheat Sheet
+              </TabsTrigger>
+              <TabsTrigger value="doubt">
+                <MessageCircleQuestion className="h-4 w-4 text-[#E17055]" />
+                Ask a Doubt
               </TabsTrigger>
             </TabsList>
 
@@ -692,6 +737,189 @@ export function StudyWorkspace({
                   {studyPack.cheat_sheet_markdown}
                 </ReactMarkdown>
               </div>
+            </TabsContent>
+
+            {/* Tab 6: Strict RAG Ask a Doubt Chat */}
+            <TabsContent value="doubt" className="no-print space-y-4">
+              <div className="rounded-xl border border-[#1E3A8A]/15 bg-[#FFFCF5] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-bold text-[#1E3A8A]">
+                      Ask a Doubt (Strict Syllabus-Grounded RAG)
+                    </h4>
+                    <p className="text-xs text-slate-600">
+                      Answers in 3–5 exam-ready lines from your Qdrant chunks. Out-of-syllabus
+                      questions are automatically flagged and rejected.
+                    </p>
+                  </div>
+                  <Badge tone="emerald">
+                    <ShieldCheck className="h-3 w-3" />
+                    Zero Hallucination Guard
+                  </Badge>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {[
+                    `What edge cases do examiners test in ${studyPack.topic}?`,
+                    `Give the key formula or rule to memorize for ${studyPack.topic}.`,
+                    "Who won the 2022 FIFA World Cup?",
+                  ].map((sample) => (
+                    <button
+                      key={sample}
+                      type="button"
+                      disabled={isAskingDoubt}
+                      onClick={() => handleAskDoubtSubmit(sample)}
+                      className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 transition-colors hover:border-[#1E3A8A] hover:text-[#1E3A8A]"
+                    >
+                      {sample}
+                    </button>
+                  ))}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleAskDoubtSubmit(doubtInput);
+                  }}
+                  className="mt-3 flex flex-col gap-2 sm:flex-row"
+                >
+                  <input
+                    type="text"
+                    value={doubtInput}
+                    onChange={(e) => setDoubtInput(e.target.value)}
+                    placeholder={`Ask any doubt about ${studyPack.topic}...`}
+                    className="h-10 flex-1 rounded-lg border border-slate-300 bg-white px-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[#1E3A8A] focus:outline-none"
+                  />
+                  <Button
+                    type="submit"
+                    variant="primary"
+                    disabled={isAskingDoubt || doubtInput.trim().length < 2}
+                  >
+                    {isAskingDoubt ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Checking Qdrant...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />
+                        Ask Strictly Grounded AI
+                      </>
+                    )}
+                  </Button>
+                </form>
+
+                {doubtError && (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800">
+                    {doubtError}
+                  </div>
+                )}
+              </div>
+
+              {doubtThread.length > 0 && (
+                <div className="space-y-3">
+                  {doubtThread.map((turn, idx) => {
+                    const showSrc = !!openDoubtSources[idx];
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-xl border border-slate-200 bg-white p-4 space-y-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-500">
+                            Your Doubt:
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <Badge tone={turn.response.grounded ? "emerald" : "coral"}>
+                              {turn.response.grounded ? (
+                                <ShieldCheck className="h-3 w-3" />
+                              ) : (
+                                <ShieldAlert className="h-3 w-3" />
+                              )}
+                              {turn.response.grounded
+                                ? "Grounded in Syllabus/PYQs"
+                                : "Out of Syllabus"}
+                            </Badge>
+                            <Badge tone="slate">{turn.response.model_used}</Badge>
+                          </div>
+                        </div>
+
+                        <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-900">
+                          {turn.question}
+                        </p>
+
+                        <div
+                          className={cn(
+                            "prose prose-sm prose-slate max-w-none rounded-lg border p-3.5",
+                            turn.response.grounded
+                              ? "border-emerald-200 bg-emerald-50/40"
+                              : "border-amber-200 bg-amber-50/60 text-amber-950"
+                          )}
+                        >
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {turn.response.answer}
+                          </ReactMarkdown>
+                        </div>
+
+                        {turn.response.sources.length > 0 && (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenDoubtSources((prev) => ({
+                                  ...prev,
+                                  [idx]: !prev[idx],
+                                }))
+                              }
+                              className="flex items-center gap-1.5 text-xs font-semibold text-[#1E3A8A] hover:underline"
+                            >
+                              <FileCheck2 className="h-3.5 w-3.5 text-[#E17055]" />
+                              {showSrc ? "Hide" : "View"} {turn.response.sources.length} Retrieved Qdrant Chunks
+                              {showSrc ? (
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+
+                            {showSrc && (
+                              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                {turn.response.sources.map((src, sIdx) => (
+                                  <div
+                                    key={sIdx}
+                                    className="rounded-lg border border-slate-200 bg-[#FFFCF5] p-2.5 text-xs"
+                                  >
+                                    <div className="mb-1 flex items-center justify-between">
+                                      <Badge
+                                        tone={
+                                          src.source.toUpperCase() === "SYLLABUS"
+                                            ? "navy"
+                                            : "coral"
+                                        }
+                                      >
+                                        {src.source}
+                                      </Badge>
+                                      <span className="font-mono text-[10px] text-slate-500">
+                                        score: {src.score}
+                                      </span>
+                                    </div>
+                                    <p className="line-clamp-3 text-slate-600">
+                                      {src.text}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </CardContent>

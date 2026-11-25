@@ -1,4 +1,5 @@
 import type {
+  AskDoubtResponse,
   BackendHealth,
   EmailSummaryResponse,
   IngestResponse,
@@ -111,4 +112,17 @@ export async function emailSubjectSummary(params: {
     body: JSON.stringify(params),
   });
   return parseJsonOrThrow<EmailSummaryResponse>(res);
+}
+
+export async function askDoubt(params: {
+  session_id: string;
+  topic: string;
+  question: string;
+}): Promise<AskDoubtResponse> {
+  const res = await fetch(`${API_BASE}/api/ask-doubt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return parseJsonOrThrow<AskDoubtResponse>(res);
 }
