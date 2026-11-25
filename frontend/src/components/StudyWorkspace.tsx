@@ -7,6 +7,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   Calculator,
@@ -21,6 +22,7 @@ import {
   Printer,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Terminal,
   XCircle,
 } from "lucide-react";
@@ -52,6 +54,7 @@ export function StudyWorkspace({
 }: StudyWorkspaceProps) {
   const [activeTab, setActiveTab] = useState("notes");
   const [openSolutions, setOpenSolutions] = useState<Record<number, boolean>>({ 0: true });
+  const [openTwists, setOpenTwists] = useState<Record<number, boolean>>({});
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [localTraceOpen, setLocalTraceOpen] = useState(false);
@@ -68,6 +71,7 @@ export function StudyWorkspace({
     setAnswers({});
     setQuizSubmitted(false);
     setOpenSolutions({ 0: true });
+    setOpenTwists({});
     setActiveTab("notes");
   }, [studyPack?.topic, studyPack?.learning_style]);
 
@@ -81,8 +85,8 @@ export function StudyWorkspace({
               Executing LangGraph RAG Pipeline for &ldquo;{loadingTopic}&rdquo;
             </h3>
             <p className="mt-1 max-w-md text-xs text-slate-500">
-              Retrieving top syllabus &amp; PYQ chunks from Qdrant and generating notes,
-              worked numericals, a 5-question quiz, and your 1-page cheat sheet...
+              Generating deep Groq study notes, Gemini worked numericals, expected twisted
+              questions, a 5-question PYQ quiz, and your 1-page cheat sheet...
             </p>
           </CardContent>
         </Card>
@@ -117,6 +121,7 @@ export function StudyWorkspace({
     );
   }
 
+  const twistedList = studyPack.twisted_questions ?? [];
   const totalQuestions = studyPack.quiz.length;
   const correctCount = studyPack.quiz.filter(
     (q) => answers[q.id] === q.correct_index
@@ -174,6 +179,10 @@ export function StudyWorkspace({
                   <ShieldCheck className="h-3 w-3" />
                   Syllabus Grounded
                 </Badge>
+                <Badge tone="coral">
+                  <Sparkles className="h-3 w-3" />
+                  Notes: {studyPack.notes_model || studyPack.generation_mode}
+                </Badge>
                 <Badge tone="slate">{studyPack.generation_mode}</Badge>
               </div>
               <CardTitle className="text-xl text-[#1E3A8A]">
@@ -181,7 +190,7 @@ export function StudyWorkspace({
               </CardTitle>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               <Button
                 variant={isTraceOpen ? "primary" : "outline"}
                 size="sm"
@@ -303,6 +312,13 @@ export function StudyWorkspace({
                 <Calculator className="h-4 w-4" />
                 Worked Examples ({studyPack.worked_examples.length})
               </TabsTrigger>
+              <TabsTrigger value="twisted">
+                <AlertTriangle className="h-4 w-4 text-[#E17055]" />
+                <span>Twisted Questions</span>
+                <span className="rounded-full bg-[#FDF3F0] px-1.5 py-0.5 font-mono text-[11px] font-bold text-[#C85A40]">
+                  {twistedList.length}
+                </span>
+              </TabsTrigger>
               <TabsTrigger value="quiz">
                 <HelpCircle className="h-4 w-4" />
                 PYQ Quiz ({studyPack.quiz.length})
@@ -315,7 +331,7 @@ export function StudyWorkspace({
 
             {/* Tab 1: Tailored Notes */}
             <TabsContent value="notes" className="no-print">
-              <div className="prose prose-slate max-w-none rounded-xl border border-slate-200/80 bg-[#FFFCF5] p-5 prose-headings:text-[#1E3A8A] prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:text-[#C85A40]">
+              <div className="prose prose-slate max-w-none rounded-xl border border-slate-200/80 bg-[#FFFCF5] p-5 sm:p-6 prose-headings:text-[#1E3A8A] prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:text-[#C85A40] prose-table:text-xs prose-th:bg-slate-100 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[rehypeKatex]}
@@ -427,7 +443,74 @@ export function StudyWorkspace({
               })}
             </TabsContent>
 
-            {/* Tab 3: Auto-Graded PYQ Quiz */}
+            {/* Tab 3: Expected Twisted Questions */}
+            <TabsContent value="twisted" className="no-print space-y-4">
+              {twistedList.map((tq, idx) => {
+                const isOpen = !!openTwists[idx];
+                return (
+                  <div
+                    key={idx}
+                    className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+                  >
+                    <div className="border-b border-slate-100 bg-[#FFFCF5] p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Badge tone="navy">Twisted Question #{idx + 1}</Badge>
+                        <Badge tone="coral">{tq.marks}</Badge>
+                      </div>
+
+                      <p className="text-sm font-semibold leading-relaxed text-slate-900 sm:text-base">
+                        {tq.question}
+                      </p>
+
+                      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/90 px-3 py-2 text-xs text-amber-950">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#E17055]" />
+                        <div>
+                          <span className="font-bold uppercase tracking-wide text-[#C85A40]">
+                            Twist / Trap Alert:{" "}
+                          </span>
+                          <span>{tq.twist_hint}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-4">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpenTwists((prev) => ({
+                            ...prev,
+                            [idx]: !prev[idx],
+                          }))
+                        }
+                        className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-[#1E3A8A] hover:bg-slate-100"
+                      >
+                        <span>
+                          {isOpen ? "Hide" : "Reveal"} Step-by-Step Solution
+                        </span>
+                        {isOpen ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </button>
+
+                      {isOpen && (
+                        <div className="prose prose-sm prose-slate mt-4 max-w-none rounded-xl border border-emerald-200 bg-emerald-50/40 p-4 prose-headings:text-[#1E3A8A] prose-strong:text-slate-900">
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm, remarkMath]}
+                            rehypePlugins={[rehypeKatex]}
+                          >
+                            {tq.model_answer}
+                          </ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </TabsContent>
+
+            {/* Tab 4: Auto-Graded PYQ Quiz */}
             <TabsContent value="quiz" className="no-print space-y-4">
               {quizSubmitted && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#1E3A8A]/20 bg-[#EEF2FF] p-4">
@@ -558,7 +641,7 @@ export function StudyWorkspace({
               )}
             </TabsContent>
 
-            {/* Tab 4: 1-Page Cheat Sheet */}
+            {/* Tab 5: 1-Page Cheat Sheet */}
             <TabsContent value="cheatsheet">
               <div className="no-print mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-[#FFFCF5] px-4 py-3">
                 <p className="text-xs font-medium text-slate-600">

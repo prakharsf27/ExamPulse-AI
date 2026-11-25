@@ -4,9 +4,11 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional, TypedDict
 
+import httpx
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
@@ -68,9 +70,17 @@ class QuizQuestion(BaseModel):
     pyq_tag: Optional[str] = None
 
 
+class TwistedQuestion(BaseModel):
+    question: str = Field(..., description="Tricky, high-order university exam question based on syllabus & PYQs")
+    marks: str = Field(..., description="Exam weightage such as '6 Marks' or '10 Marks'")
+    twist_hint: str = Field(..., description="1-line Trap / Twist Alert explaining what makes the question tricky")
+    model_answer: str = Field(..., description="Clear, step-by-step ideal exam answer in Markdown")
+
+
 class GeneratedNotesPack(BaseModel):
     summary: str = Field(..., description="Markdown summary tailored to learning_style and hours_remaining")
     worked_examples: List[WorkedExample] = Field(..., min_length=1, description="Step-by-step solved numericals/examples")
+    twisted_questions: List[TwistedQuestion] = Field(..., min_length=3, max_length=4, description="3-4 expected tricky/twisted exam questions")
     cheat_sheet_markdown: str = Field(..., description="Dense 1-page formula and key-concept revision sheet in Markdown")
 
 
@@ -113,8 +123,10 @@ class AgentState(TypedDict, total=False):
     retrieved_sources: List[RetrievedSource]
     summary: str
     worked_examples: List[WorkedExample]
+    twisted_questions: List[TwistedQuestion]
     quiz: List[QuizQuestion]
     cheat_sheet_markdown: str
+    notes_model: str
     generation_mode: str
     workflow_trace: List[WorkflowTraceEntry]
 
@@ -145,7 +157,7 @@ def make_trace(
     ]
 
 
-def _get_gemini_llm(model_name: str, temperature: float = 0.0, timeout: int = 18):
+def _get_gemini_llm(model_name: str, temperature: float = 0.0, timeout: int = 35):
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         return None
@@ -158,28 +170,76 @@ def _get_gemini_llm(model_name: str, temperature: float = 0.0, timeout: int = 18
             temperature=temperature,
             max_retries=0,
             timeout=timeout,
+            transport="rest",
         )
     except Exception as exc:
         logger.warning("Failed to initialize Gemini (%s): %s", model_name, exc)
         return None
 
 
-def _get_groq_llm(temperature: float = 0.0, timeout: int = 15):
+_GROQ_AVAILABLE_CACHE: Optional[List[str]] = None
+
+
+def _get_groq_candidate_models(api_key: str) -> List[str]:
+    """Resolve active Groq chat models on the current key, avoiding 404s."""
+    global _GROQ_AVAILABLE_CACHE
+    preferred = [
+        os.getenv("GROQ_MODEL", "").strip(),
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "openai/gpt-oss-120b",
+        "qwen/qwen3.8-27b",
+        "openai/gpt-oss-20b",
+    ]
+    preferred = [m for i, m in enumerate(preferred) if m and m not in preferred[:i]]
+
+    if _GROQ_AVAILABLE_CACHE is None:
+        try:
+            resp = httpx.get(
+                "https://api.groq.com/openai/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=8.0,
+            )
+            if resp.status_code == 200:
+                _GROQ_AVAILABLE_CACHE = [
+                    m["id"]
+                    for m in resp.json().get("data", [])
+                    if isinstance(m, dict) and m.get("id")
+                ]
+        except Exception as exc:
+            logger.warning("Groq model listing failed (%s); using static preference list.", exc)
+
+    if _GROQ_AVAILABLE_CACHE:
+        active = [m for m in preferred if m in _GROQ_AVAILABLE_CACHE]
+        if active:
+            return active
+        non_audio = [
+            m
+            for m in _GROQ_AVAILABLE_CACHE
+            if not any(x in m for x in ("whisper", "orpheus", "guard", "safeguard"))
+        ]
+        if non_audio:
+            return non_audio
+    return preferred
+
+
+def _get_groq_llm(model_name: Optional[str] = None, temperature: float = 0.0, timeout: int = 20):
     api_key = os.getenv("GROQ_API_KEY", "").strip()
     if not api_key:
         return None
     try:
         from langchain_groq import ChatGroq
 
+        chosen = model_name or _get_groq_candidate_models(api_key)[0]
         return ChatGroq(
-            model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=chosen,
             groq_api_key=api_key,
             temperature=temperature,
             max_retries=0,
             timeout=timeout,
         )
     except Exception as exc:
-        logger.warning("Failed to initialize Groq: %s", exc)
+        logger.warning("Failed to initialize Groq (%s): %s", model_name, exc)
         return None
 
 
@@ -718,7 +778,100 @@ def _fallback_pack(
             for i in range(1, 6)
         ]
 
-    return {"summary": summary, "worked_examples": examples, "cheat_sheet_markdown": cheat, "quiz": quiz}
+    twisted_default = [
+        TwistedQuestion(
+            question=f"Suppose a core constraint or parameter in {topic} is inverted or pushed to an extreme edge case (e.g., zero/infinite parameter or tie-breaking conflict). How does system behavior change according to the syllabus?",
+            marks="8 Marks",
+            twist_hint="Examiners test boundary conditions where standard formulas behave non-intuitively.",
+            model_answer=(
+                "1. **Identify the boundary condition** stated in the syllabus definition.\n"
+                "2. **Substitute the extreme parameter** into the governing equation or state-transition rule.\n"
+                "3. **State the resulting edge behavior** (e.g., degradation to FCFS, starvation, or anomaly) and cite the exact mitigation."
+            ),
+        ),
+        TwistedQuestion(
+            question=f"Design a counter-example or failure scenario for {topic} where a commonly assumed invariant does NOT hold.",
+            marks="6 Marks",
+            twist_hint="Watch out for necessary vs. sufficient conditions tested in past PYQs.",
+            model_answer=(
+                "1. **Clarify the distinction** between necessary and sufficient conditions.\n"
+                "2. **Construct the minimal counter-example** using exact parameters from the syllabus model.\n"
+                "3. **Prove why the invariant fails** step by step."
+            ),
+        ),
+        TwistedQuestion(
+            question=f"Compare two competing mechanisms within {topic} under high-contention workload and justify which preserves fairness and throughput.",
+            marks="10 Marks",
+            twist_hint="Avoid generic pros/cons—tie your justification directly to turnaround, overhead, and starvation metrics.",
+            model_answer=(
+                "1. **Define the evaluation metrics** explicitly.\n"
+                "2. **Contrast overhead vs. starvation risk** under heavy contention.\n"
+                "3. **Conclude with a concrete exam recommendation** backed by formulas."
+            ),
+        ),
+    ]
+
+    return {
+        "summary": summary,
+        "worked_examples": examples,
+        "twisted_questions": twisted_default,
+        "cheat_sheet_markdown": cheat,
+        "quiz": quiz,
+    }
+
+
+def _generate_groq_notes(
+    topic: str,
+    hours: float,
+    style: LearningStyle,
+    context: str,
+) -> Optional[tuple[str, str]]:
+    """Generate comprehensive, structured Markdown notes via Groq."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or not context.strip():
+        return None
+
+    candidates = _get_groq_candidate_models(api_key)
+    prompt_messages = [
+        SystemMessage(
+            content=(
+                "You are ExamPulse AI, an expert university engineering tutor. "
+                "Generate comprehensive, exam-ready Markdown study notes grounded STRICTLY "
+                "in the provided Syllabus and PYQ context. Do NOT invent out-of-syllabus topics. "
+                "Write thorough, high-clarity explanations adapted to the student's learning style."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Topic: {topic}\n"
+                f"Hours Remaining Before Exam: {hours}\n"
+                f"Learning Style: {style}\n\n"
+                "Format the notes in clean Markdown with these exact 4 sections:\n"
+                "## 1. Core Concept & Intuition\n"
+                "(Clear, thorough explanation adapted to the learning style)\n\n"
+                "## 2. Key Formulas, Algorithms & Rules\n"
+                "(All governing equations, steps, and constraints cleanly formatted)\n\n"
+                "## 3. Important Distinctions & Edge Cases\n"
+                "(Include a crisp Markdown comparison table or structured edge-case breakdown)\n\n"
+                "## 4. How Examiners Test This Topic\n"
+                "(Reference exact question styles, mark splits, and traps from the retrieved PYQs)\n\n"
+                f"{context}"
+            )
+        ),
+    ]
+
+    for model_name in candidates:
+        llm = _get_groq_llm(model_name=model_name, temperature=0.2, timeout=25)
+        if llm is None:
+            continue
+        try:
+            resp = llm.invoke(prompt_messages)
+            content = str(resp.content).strip()
+            if len(content) >= 250:
+                return content, f"Groq ({model_name})"
+        except Exception as exc:
+            logger.warning("Groq notes generation (%s) failed (%s)", model_name, exc)
+    return None
 
 
 def generate_study_pack_node(state: AgentState) -> Dict[str, Any]:
@@ -733,26 +886,14 @@ def generate_study_pack_node(state: AgentState) -> Dict[str, Any]:
     gen_model = os.getenv("GEMINI_GENERATOR_MODEL", "gemini-3.5-flash-lite")
     if gen_model == "gemini-3.8-flash":
         gen_model = "gemini-3.5-flash-lite"
-    parser_model = os.getenv("GEMINI_PARSER_MODEL", "gemini-3.5-flash-lite")
 
-    summary = ""
-    examples: List[WorkedExample] = []
-    cheat_sheet = ""
-    gen_mode = "grounded-local-fallback"
-
-    candidates = [(gen_model, 25)]
-    if parser_model != gen_model:
-        candidates.append((parser_model, 25))
-
-    for candidate_model, req_timeout in candidates:
-        llm = _get_gemini_llm(candidate_model, temperature=0.0, timeout=req_timeout)
+    def run_gemini_structured() -> Optional[GeneratedNotesPack]:
+        llm = _get_gemini_llm(gen_model, temperature=0.0, timeout=40)
         if llm is None or not (syl_docs or pyq_docs):
-            continue
+            return None
         try:
-            structured_notes = llm.with_structured_output(
-                GeneratedNotesPack, method="json_schema"
-            )
-            parsed_pack: GeneratedNotesPack = structured_notes.invoke(
+            structured = llm.with_structured_output(GeneratedNotesPack, method="json_schema")
+            return structured.invoke(
                 [
                     SystemMessage(
                         content=(
@@ -764,85 +905,95 @@ def generate_study_pack_node(state: AgentState) -> Dict[str, Any]:
                     HumanMessage(
                         content=(
                             f"Topic: {topic}\nHours Remaining: {hours}\nLearning Style: {style}\n\n"
-                            "Tailor depth:\n"
-                            "- Crash Course: crisp bullet points, formulas first, high-yield exam triggers.\n"
-                            "- Conceptual: clear intuition, definitions, comparisons.\n"
-                            "- Numerical-Heavy: formulas, units, edge cases, and detailed step-by-step solved numericals.\n\n"
+                            "Generate:\n"
+                            "1. summary: Brief 3-bullet fallback Markdown summary.\n"
+                            "2. worked_examples: 1-2 step-by-step solved numericals/examples.\n"
+                            "3. twisted_questions: 3 tricky, high-order university exam questions "
+                            "(modified constraints, edge-case numericals, 'What happens if X fails?', or conceptual traps) "
+                            "with marks (e.g. '6 Marks', '10 Marks'), a 1-line twist_hint ('Trap / Twist Alert'), "
+                            "and a clear step-by-step model_answer.\n"
+                            "4. cheat_sheet_markdown: Dense 1-page formula & key-concept revision sheet.\n\n"
                             f"{context}"
                         )
                     ),
                 ]
             )
-            if parsed_pack and parsed_pack.summary and parsed_pack.worked_examples and parsed_pack.cheat_sheet_markdown:
-                summary = parsed_pack.summary
-                examples = parsed_pack.worked_examples
-                cheat_sheet = parsed_pack.cheat_sheet_markdown
-                gen_mode = candidate_model
-                break
         except Exception as exc:
-            logger.warning("Generator %s failed (%s)", candidate_model, exc)
+            logger.warning("Gemini structured pack (%s) failed (%s)", gen_model, exc)
+            return None
 
-    if not summary:
-        fb = _fallback_pack(topic, style, hours, syl_docs, pyq_docs)
-        summary = fb["summary"]
-        examples = fb["worked_examples"]
-        cheat_sheet = fb["cheat_sheet_markdown"]
-
-    # Quiz generation: primary gemini-3.5-flash-lite with schema-enforced structured output
-    quiz: List[QuizQuestion] = []
-    quiz_attempts = []
-    gemini_quiz_llm = _get_gemini_llm(gen_model, temperature=0.0, timeout=25)
-    if gemini_quiz_llm is not None:
-        quiz_attempts.append((gemini_quiz_llm, gen_model, "json_schema"))
-    groq_llm = _get_groq_llm(temperature=0.0, timeout=12)
-    if groq_llm is not None:
-        quiz_attempts.append((groq_llm, f"groq/{os.getenv('GROQ_MODEL', 'llama-3.3-70b-versatile')}", None))
-
-    for quiz_llm, quiz_provider, out_method in quiz_attempts:
+    def run_gemini_quiz() -> List[QuizQuestion]:
         if not (syl_docs or pyq_docs):
-            break
-        try:
-            structured_quiz = (
-                quiz_llm.with_structured_output(GeneratedQuizPack, method=out_method)
-                if out_method
-                else quiz_llm.with_structured_output(GeneratedQuizPack)
-            )
-            q_pack: GeneratedQuizPack = structured_quiz.invoke(
-                [
-                    SystemMessage(
-                        content="Generate 5 PYQ-style MCQs (with integer id 1..5, question, 4 options, 0-based correct_index, and brief explanation) grounded ONLY in the provided context."
-                    ),
-                    HumanMessage(content=f"Topic: {topic}\n\n{context}"),
-                ]
-            )
-            if q_pack and len(q_pack.quiz) >= 3:
-                for q_i, q_item in enumerate(q_pack.quiz[:5], start=1):
-                    q_item.id = q_i
-                quiz = q_pack.quiz[:5]
-                if gen_mode == "grounded-local-fallback":
-                    gen_mode = quiz_provider
-                elif quiz_provider != gen_mode:
-                    gen_mode = f"{gen_mode} + quiz:{quiz_provider}"
-                break
-        except Exception as exc:
-            logger.warning("Quiz generator (%s) failed (%s)", quiz_provider, exc)
+            return []
+        llm = _get_gemini_llm(gen_model, temperature=0.0, timeout=35)
+        if llm is not None:
+            try:
+                structured_quiz = llm.with_structured_output(GeneratedQuizPack, method="json_schema")
+                q_pack: GeneratedQuizPack = structured_quiz.invoke(
+                    [
+                        SystemMessage(
+                            content="Generate 5 PYQ-style MCQs (integer id 1..5, question, 4 options, 0-based correct_index, brief explanation) grounded ONLY in the provided context."
+                        ),
+                        HumanMessage(content=f"Topic: {topic}\n\n{context}"),
+                    ]
+                )
+                if q_pack and len(q_pack.quiz) >= 3:
+                    for q_i, q_item in enumerate(q_pack.quiz[:5], start=1):
+                        q_item.id = q_i
+                    return q_pack.quiz[:5]
+            except Exception as exc:
+                logger.warning("Gemini quiz (%s) failed (%s)", gen_model, exc)
+        return []
+
+    # Run Groq notes, Gemini structured pack (examples/twisted/cheat-sheet), and Gemini quiz in parallel
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_groq = pool.submit(_generate_groq_notes, topic, hours, style, context)
+        f_pack = pool.submit(run_gemini_structured)
+        f_quiz = pool.submit(run_gemini_quiz)
+        groq_notes_res = f_groq.result()
+        parsed_pack = f_pack.result()
+        quiz = f_quiz.result()
+
+    fb = _fallback_pack(topic, style, hours, syl_docs, pyq_docs)
+
+    if parsed_pack and parsed_pack.worked_examples and parsed_pack.cheat_sheet_markdown:
+        examples = parsed_pack.worked_examples
+        twisted_questions = parsed_pack.twisted_questions or fb["twisted_questions"]
+        cheat_sheet = parsed_pack.cheat_sheet_markdown
+        gen_mode = gen_model
+    else:
+        examples = fb["worked_examples"]
+        twisted_questions = fb["twisted_questions"]
+        cheat_sheet = fb["cheat_sheet_markdown"]
+        gen_mode = "grounded-local-fallback"
+
+    if groq_notes_res is not None:
+        summary, notes_model = groq_notes_res
+    elif parsed_pack and parsed_pack.summary:
+        summary = parsed_pack.summary
+        notes_model = f"Gemini ({gen_model})"
+    else:
+        summary = fb["summary"]
+        notes_model = "Local Grounded Fallback"
 
     if not quiz:
-        quiz = _fallback_pack(topic, style, hours, syl_docs, pyq_docs)["quiz"]
+        quiz = fb["quiz"]
 
     return {
         "summary": summary,
         "worked_examples": examples,
+        "twisted_questions": twisted_questions,
         "cheat_sheet_markdown": cheat_sheet,
         "quiz": quiz,
+        "notes_model": notes_model,
         "generation_mode": gen_mode,
         "workflow_trace": make_trace(
             trace,
             "generate_study_pack_node",
             "Generated Grounded Study Pack",
-            f"Compiled {style} notes, {len(examples)} worked example(s), {len(quiz)} PYQ MCQs, and 1-page cheat sheet ({gen_mode}).",
+            f"Notes via {notes_model}; {len(examples)} worked example(s), {len(twisted_questions)} twisted Qs, {len(quiz)} PYQ MCQs, and cheat sheet via {gen_mode}.",
             chunk_count=len(syl_docs) + len(pyq_docs),
-            status="fallback" if gen_mode == "grounded-local-fallback" else "completed",
+            status="fallback" if gen_mode == "grounded-local-fallback" and "Fallback" in notes_model else "completed",
         ),
     }
 

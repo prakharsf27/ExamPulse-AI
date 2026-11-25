@@ -16,6 +16,7 @@ from workflow import (
     PrioritizedTopic,
     QuizQuestion,
     RetrievedSource,
+    TwistedQuestion,
     WorkedExample,
     WorkflowTraceEntry,
     agentic_rag_graph,
@@ -65,10 +66,12 @@ class StudyPackResponse(BaseModel):
     learning_style: LearningStyle
     summary: str
     worked_examples: List[WorkedExample]
+    twisted_questions: List[TwistedQuestion] = Field(default_factory=list)
     quiz: List[QuizQuestion]
     cheat_sheet_markdown: str
     retrieved_sources: List[RetrievedSource] = Field(default_factory=list)
     workflow_trace: List[WorkflowTraceEntry] = Field(default_factory=list)
+    notes_model: str = "Groq"
     generation_mode: str = "grounded-local-fallback"
 
 
@@ -357,9 +360,11 @@ def generate_study_pack_endpoint(req: StudyPackRequest) -> StudyPackResponse:
         learning_style=req.learning_style,
         summary=graph_out["summary"],
         worked_examples=graph_out["worked_examples"],
+        twisted_questions=graph_out.get("twisted_questions", []),
         quiz=graph_out["quiz"],
         cheat_sheet_markdown=graph_out["cheat_sheet_markdown"],
         retrieved_sources=graph_out["retrieved_sources"],
         workflow_trace=graph_out["workflow_trace"],
+        notes_model=graph_out.get("notes_model", "Gemini (gemini-3.5-flash-lite)"),
         generation_mode=graph_out.get("generation_mode", "grounded-local-fallback"),
     )

@@ -85,6 +85,13 @@ export interface QuizQuestion {
   pyq_tag?: string | null;
 }
 
+export interface TwistedQuestion {
+  question: string;
+  marks: string;
+  twist_hint: string;
+  model_answer: string;
+}
+
 export interface RetrievedSource {
   source: "syllabus" | "pyq";
   paper_name: string;
@@ -99,10 +106,12 @@ export interface StudyPackResponse {
   learning_style: LearningStyle;
   summary: string;
   worked_examples: WorkedExample[];
+  twisted_questions?: TwistedQuestion[];
   quiz: QuizQuestion[];
   cheat_sheet_markdown: string;
   retrieved_sources: RetrievedSource[];
   workflow_trace: WorkflowTraceEntry[];
+  notes_model?: string;
   generation_mode: string;
 }
 
