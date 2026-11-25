@@ -1,5 +1,4 @@
 .env
-.env.example
 backend/.env
 backend/.venv/
 backend/.data/

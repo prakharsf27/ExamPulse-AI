@@ -13,16 +13,30 @@ export interface ParsedSyllabus {
   units: SyllabusUnit[];
 }
 
+export interface WorkflowTraceEntry {
+  step: number;
+  node: string;
+  title: string;
+  detail: string;
+  timestamp: string;
+  chunk_count?: number | null;
+  status: "completed" | "fallback";
+}
+
 export interface IngestResponse {
   session_id: string;
   syllabus: ParsedSyllabus;
   stats: {
+    syllabus_chunks_count?: number;
+    pyq_chunks_count?: number;
     syllabus_chunks: number;
     pyq_chunks: number;
     pyq_files: string[];
     qdrant_mode?: string;
+    embedding_mode?: string;
     is_demo?: boolean;
   };
+  workflow_trace?: WorkflowTraceEntry[];
 }
 
 export interface MatchedPYQ {
@@ -49,6 +63,7 @@ export interface PrioritizeResponse {
   learning_style: LearningStyle;
   strategy_note: string;
   prioritized_topics: PrioritizedTopic[];
+  workflow_trace?: WorkflowTraceEntry[];
 }
 
 export interface WorkedExample {
@@ -70,11 +85,12 @@ export interface QuizQuestion {
   pyq_tag?: string | null;
 }
 
-export interface GroundedSource {
+export interface RetrievedSource {
   source: "syllabus" | "pyq";
-  filename: string;
+  paper_name: string;
   excerpt: string;
   score: number;
+  chunk_index?: number;
 }
 
 export interface StudyPackResponse {
@@ -85,7 +101,8 @@ export interface StudyPackResponse {
   worked_examples: WorkedExample[];
   quiz: QuizQuestion[];
   cheat_sheet_markdown: string;
-  grounded_sources: GroundedSource[];
+  retrieved_sources: RetrievedSource[];
+  workflow_trace: WorkflowTraceEntry[];
   generation_mode: string;
 }
 

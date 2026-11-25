@@ -12,6 +12,10 @@ import { UploadPanel } from "@/components/UploadPanel";
 import { ConstraintSidebar } from "@/components/ConstraintSidebar";
 import { PriorityStudyMap } from "@/components/PriorityStudyMap";
 import { StudyWorkspace } from "@/components/StudyWorkspace";
+import {
+  WorkflowProgressBar,
+  type WorkflowStageId,
+} from "@/components/WorkflowProgressBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +35,7 @@ import type {
 
 export default function ExamPulsePage() {
   const [health, setHealth] = useState<BackendHealth | null>(null);
+  const [activeStep, setActiveStep] = useState<WorkflowStageId>(1);
   const [session, setSession] = useState<IngestResponse | null>(null);
   const [knownTopics, setKnownTopics] = useState<Set<string>>(new Set());
   const [hoursRemaining, setHoursRemaining] = useState<number>(8);
@@ -39,6 +44,7 @@ export default function ExamPulsePage() {
   const [priorityPlan, setPriorityPlan] = useState<PrioritizeResponse | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [studyPackCache, setStudyPackCache] = useState<Record<string, StudyPackResponse>>({});
+  const [traceDrawerOpen, setTraceDrawerOpen] = useState<boolean>(false);
 
   const [isIngesting, setIsIngesting] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("");
@@ -52,42 +58,6 @@ export default function ExamPulsePage() {
       .catch(() => setHealth(null));
   }, []);
 
-  const runPrioritizeAndSelectFirst = async (
-    sess: IngestResponse,
-    known: Set<string>,
-    hours: number,
-    style: LearningStyle
-  ) => {
-    const unchecked = sess.syllabus.units
-      .flatMap((u) => u.topics)
-      .filter((t) => !known.has(t));
-
-    if (unchecked.length === 0) {
-      setError("All topics are marked as known! Uncheck at least one topic to generate a study plan.");
-      return;
-    }
-
-    setError(null);
-    setIsPrioritizing(true);
-    try {
-      const plan = await prioritizeStudyPlan({
-        session_id: sess.session_id,
-        unchecked_topics: unchecked,
-        hours_remaining: hours,
-        learning_style: style,
-      });
-      setPriorityPlan(plan);
-      if (plan.prioritized_topics.length > 0) {
-        const topTopic = plan.prioritized_topics[0].topic;
-        await handleSelectTopic(topTopic, sess.session_id, hours, style);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to prioritize topics.");
-    } finally {
-      setIsPrioritizing(false);
-    }
-  };
-
   const handleIngest = async (syllabusPdf: File, pyqPdfs: File[]) => {
     setError(null);
     setIsIngesting(true);
@@ -99,7 +69,7 @@ export default function ExamPulsePage() {
       setPriorityPlan(null);
       setSelectedTopic(null);
       setStudyPackCache({});
-      await runPrioritizeAndSelectFirst(res, new Set(), hoursRemaining, learningStyle);
+      setActiveStep(2);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to ingest uploaded PDFs.");
     } finally {
@@ -123,7 +93,7 @@ export default function ExamPulsePage() {
       setPriorityPlan(null);
       setSelectedTopic(null);
       setStudyPackCache({});
-      await runPrioritizeAndSelectFirst(res, preChecked, hoursRemaining, learningStyle);
+      setActiveStep(2);
     } catch (err) {
       setError(
         err instanceof Error
@@ -136,20 +106,45 @@ export default function ExamPulsePage() {
     }
   };
 
-  const handleSelectTopic = async (
-    topic: string,
-    overrideSessionId?: string,
-    overrideHours?: number,
-    overrideStyle?: LearningStyle,
-    forceRefresh = false
-  ) => {
-    const sid = overrideSessionId || session?.session_id;
-    if (!sid) return;
-    const hrs = overrideHours ?? hoursRemaining;
-    const sty = overrideStyle ?? learningStyle;
-    const cacheKey = `${sid}::${topic}::${sty}::${hrs}`;
+  const handlePrioritize = async () => {
+    if (!session) return;
+    const unchecked = session.syllabus.units
+      .flatMap((u) => u.topics)
+      .filter((t) => !knownTopics.has(t));
+
+    if (unchecked.length === 0) {
+      setError(
+        "All topics are marked as known! Uncheck at least one topic to generate a study plan."
+      );
+      return;
+    }
+
+    setError(null);
+    setIsPrioritizing(true);
+    try {
+      const plan = await prioritizeStudyPlan({
+        session_id: session.session_id,
+        unchecked_topics: unchecked,
+        hours_remaining: hoursRemaining,
+        learning_style: learningStyle,
+      });
+      setPriorityPlan(plan);
+      setActiveStep(3);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to prioritize topics.");
+    } finally {
+      setIsPrioritizing(false);
+    }
+  };
+
+  const handleOpenStudyPack = async (topic: string, forceRefresh = false) => {
+    if (!session) return;
+    const cacheKey = `${session.session_id}::${topic}::${learningStyle}::${hoursRemaining}`;
 
     setSelectedTopic(topic);
+    setTraceDrawerOpen(false);
+    setActiveStep(4);
+
     if (!forceRefresh && studyPackCache[cacheKey]) {
       return;
     }
@@ -158,10 +153,10 @@ export default function ExamPulsePage() {
     setLoadingTopicPack(topic);
     try {
       const pack = await generateStudyPack({
-        session_id: sid,
+        session_id: session.session_id,
         topic,
-        hours_remaining: hrs,
-        learning_style: sty,
+        hours_remaining: hoursRemaining,
+        learning_style: learningStyle,
       });
       setStudyPackCache((prev) => ({ ...prev, [cacheKey]: pack }));
     } catch (err) {
@@ -190,7 +185,9 @@ export default function ExamPulsePage() {
     setPriorityPlan(null);
     setSelectedTopic(null);
     setStudyPackCache({});
+    setTraceDrawerOpen(false);
     setError(null);
+    setActiveStep(1);
   };
 
   const activeCacheKey =
@@ -199,10 +196,36 @@ export default function ExamPulsePage() {
       : null;
   const activeStudyPack = activeCacheKey ? studyPackCache[activeCacheKey] ?? null : null;
 
+  const completedSteps = new Set<WorkflowStageId>();
+  if (session) completedSteps.add(1);
+  if (priorityPlan) completedSteps.add(2);
+  if (priorityPlan && (activeStudyPack || selectedTopic)) completedSteps.add(3);
+  if (activeStudyPack) completedSteps.add(4);
+
+  let busyStep: WorkflowStageId | null = null;
+  if (isIngesting) busyStep = 1;
+  else if (isPrioritizing) busyStep = 2;
+  else if (loadingTopicPack) busyStep = 4;
+
+  const stepMeta: Partial<Record<WorkflowStageId, string>> = {
+    1: session
+      ? `${session.stats.syllabus_chunks} syl + ${session.stats.pyq_chunks} PYQ chunks`
+      : "Syllabus + PYQs",
+    2: session
+      ? `${hoursRemaining}h · ${learningStyle}`
+      : "Hours & Checklist",
+    3: priorityPlan
+      ? `${priorityPlan.prioritized_topics.length} topics ranked`
+      : "PYQ Weightage Rank",
+    4: activeStudyPack
+      ? `${activeStudyPack.generation_mode}`
+      : "Notes, Quiz & Sheet",
+  };
+
   return (
     <div className="min-h-screen bg-[#FFFCF5]">
       {/* Top Academic Header */}
-      <header className="no-print sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+      <header className="no-print sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#1E3A8A] text-white shadow-sm">
@@ -241,7 +264,7 @@ export default function ExamPulsePage() {
                 </Badge>
                 <Badge tone={health.gemini_configured ? "navy" : "amber"}>
                   <Sparkles className="h-3 w-3" />
-                  {health.gemini_configured ? "Gemini Live" : "Local Fallback Mode"}
+                  {health.gemini_configured ? "gemini-3.5-flash-lite" : "Local Fallback"}
                 </Badge>
               </div>
             ) : (
@@ -258,8 +281,23 @@ export default function ExamPulsePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        {!session ? (
+      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6">
+        <WorkflowProgressBar
+          activeStep={activeStep}
+          completedSteps={completedSteps}
+          busyStep={busyStep}
+          onSelectStep={(step) => setActiveStep(step)}
+          stepMeta={stepMeta}
+        />
+
+        {error && activeStep !== 1 && (
+          <div className="no-print mx-auto mb-5 max-w-6xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
+            {error}
+          </div>
+        )}
+
+        {/* Step 1: Upload & Ingest */}
+        {activeStep === 1 && (
           <UploadPanel
             onIngest={handleIngest}
             onLoadDemo={handleLoadDemo}
@@ -267,58 +305,46 @@ export default function ExamPulsePage() {
             loadingLabel={loadingLabel}
             error={error}
           />
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-12">
-            {/* Left Sidebar */}
-            <div className="lg:col-span-4 xl:col-span-3">
-              <ConstraintSidebar
-                syllabus={session.syllabus}
-                knownTopics={knownTopics}
-                onToggleTopic={handleToggleTopic}
-                onBulkCheck={handleBulkCheck}
-                hoursRemaining={hoursRemaining}
-                onChangeHours={setHoursRemaining}
-                learningStyle={learningStyle}
-                onChangeLearningStyle={setLearningStyle}
-                onPrioritize={() =>
-                  runPrioritizeAndSelectFirst(
-                    session,
-                    knownTopics,
-                    hoursRemaining,
-                    learningStyle
-                  )
-                }
-                isPrioritizing={isPrioritizing}
-              />
-            </div>
+        )}
 
-            {/* Right Main Study Workspace */}
-            <div className="space-y-6 lg:col-span-8 xl:col-span-9">
-              {error && (
-                <div className="no-print rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800">
-                  {error}
-                </div>
-              )}
+        {/* Step 2: Configure Constraints & Mastery */}
+        {activeStep === 2 && session && (
+          <ConstraintSidebar
+            syllabus={session.syllabus}
+            knownTopics={knownTopics}
+            onToggleTopic={handleToggleTopic}
+            onBulkCheck={handleBulkCheck}
+            hoursRemaining={hoursRemaining}
+            onChangeHours={setHoursRemaining}
+            learningStyle={learningStyle}
+            onChangeLearningStyle={setLearningStyle}
+            onPrioritize={handlePrioritize}
+            isPrioritizing={isPrioritizing}
+          />
+        )}
 
-              {priorityPlan && (
-                <PriorityStudyMap
-                  plan={priorityPlan}
-                  selectedTopic={selectedTopic}
-                  onSelectTopic={(topic) => handleSelectTopic(topic)}
-                  isGeneratingTopic={loadingTopicPack}
-                />
-              )}
+        {/* Step 3: AI Priority Study Map */}
+        {activeStep === 3 && priorityPlan && (
+          <PriorityStudyMap
+            plan={priorityPlan}
+            selectedTopic={selectedTopic}
+            onSelectTopic={(topic) => handleOpenStudyPack(topic)}
+            onEditConstraints={() => setActiveStep(2)}
+            isGeneratingTopic={loadingTopicPack}
+          />
+        )}
 
-              <StudyWorkspace
-                studyPack={activeStudyPack}
-                isLoading={loadingTopicPack !== null}
-                loadingTopic={loadingTopicPack}
-                onRegenerate={(topic) =>
-                  handleSelectTopic(topic, undefined, undefined, undefined, true)
-                }
-              />
-            </div>
-          </div>
+        {/* Step 4: Adaptive Study Workspace */}
+        {activeStep === 4 && (
+          <StudyWorkspace
+            studyPack={activeStudyPack}
+            isLoading={loadingTopicPack !== null}
+            loadingTopic={loadingTopicPack}
+            onRegenerate={(topic) => handleOpenStudyPack(topic, true)}
+            onBackToPriority={() => setActiveStep(3)}
+            traceDrawerOpen={traceDrawerOpen}
+            onToggleTraceDrawer={setTraceDrawerOpen}
+          />
         )}
       </main>
     </div>

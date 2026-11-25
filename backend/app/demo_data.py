@@ -9,27 +9,27 @@ CS-302: OPERATING SYSTEMS — PRESCRIBED UNIVERSITY SYLLABUS
 Credits: 4 | Exam Duration: 3 Hours | Total Marks: 100
 
 UNIT 1: Process Management & CPU Scheduling
-- Process Concept, Process Control Block (PCB), Process States (New, Ready, Running, Waiting, Terminated) and Context Switching overhead.
-- CPU Scheduling Criteria: CPU Utilization, Throughput, Turnaround Time (TAT = Completion Time - Arrival Time), Waiting Time (WT = TAT - Burst Time), Response Time.
-- Preemptive vs Non-Preemptive Scheduling Algorithms: First-Come First-Served (FCFS) and Convoy Effect, Shortest Job First (SJF), Shortest Remaining Time First (SRTF), Priority Scheduling (Aging to prevent Starvation), Round Robin (RR) with Time Quantum q, Multilevel Queue and Multilevel Feedback Queue Scheduling.
+- Process Control Block (PCB), Process States & Context Switching
+- CPU Scheduling Criteria (Turnaround Time, Waiting Time, Response Time)
+- Non-Preemptive Scheduling: FCFS (Convoy Effect) and SJF
+- Preemptive Scheduling: SRTF, Round Robin (Time Quantum q), and Priority Aging
 
 UNIT 2: Process Synchronization & Deadlocks
-- Race Conditions, Critical Section Problem Requirements (Mutual Exclusion, Progress, Bounded Waiting), Peterson's Solution, Hardware Synchronization (TestAndSet, CompareAndSwap).
-- Semaphores (Counting & Binary), Mutex Locks, Classic Synchronization Problems (Bounded Buffer / Producer-Consumer, Readers-Writers, Dining Philosophers).
-- Deadlock Characterization (4 Coffman Conditions: Mutual Exclusion, Hold and Wait, No Preemption, Circular Wait), Resource Allocation Graphs (RAG).
-- Deadlock Handling: Prevention, Avoidance using Banker's Algorithm (Need = Max - Allocation, Safety Algorithm, Resource-Request Algorithm), Deadlock Detection and Recovery.
+- Critical Section Requirements, Semaphores & Producer-Consumer Problem
+- Deadlock Characterization (4 Coffman Conditions) & Resource Allocation Graphs
+- Banker's Algorithm for Deadlock Avoidance (Safety & Resource-Request)
+- Deadlock Prevention, Detection & Recovery
 
 UNIT 3: Memory Management & Paging
-- Logical vs Physical Address Space, Memory Management Unit (MMU), Dynamic Relocation, Swapping.
-- Contiguous Memory Allocation: Fixed & Variable Partitioning, Allocation Strategies (First Fit, Best Fit, Worst Fit), Internal vs External Fragmentation, Compaction.
-- Paging Hardware: Page Number (p) and Page Offset (d), Page Table, Translation Lookaside Buffer (TLB), Hit Ratio (h), Effective Memory Access Time: EMAT = h*(t_TLB + t_mem) + (1 - h)*(t_TLB + 2*t_mem).
-- Multi-level Paging, Inverted Page Tables, Segmentation and Paged Segmentation.
+- Contiguous Allocation (First Fit, Best Fit, Worst Fit) & Fragmentation
+- Paging Hardware, Page Tables & Translation Lookaside Buffer (TLB EMAT)
+- Multi-level Paging, Segmentation & Inverted Page Tables
 
 UNIT 4: Virtual Memory & Disk Scheduling
-- Virtual Memory Concepts, Demand Paging, Valid-Invalid Bit, Page Fault Handling Routine, Effective Access Time with Page Fault Rate p: EAT = (1 - p)*ma + p*(Page Fault Service Time).
-- Page Replacement Algorithms: FIFO (and Belady's Anomaly), Optimal Page Replacement (OPT), Least Recently Used (LRU), Second-Chance / Clock Algorithm.
-- Allocation of Frames, Thrashing and Working Set Model (Delta window).
-- Secondary Storage & Disk Scheduling Algorithms: Seek Time, Rotational Latency, Transfer Time, FCFS, Shortest Seek Time First (SSTF), SCAN (Elevator), C-SCAN, LOOK and C-LOOK.
+- Demand Paging, Page Fault Handling & Effective Access Time (EAT)
+- Page Replacement Algorithms: FIFO (Belady's Anomaly), Optimal (OPT) & LRU
+- Frame Allocation, Thrashing & Working Set Model
+- Disk Scheduling Algorithms: SSTF, SCAN & C-SCAN
 """.strip()
 
 

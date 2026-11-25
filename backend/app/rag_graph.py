@@ -124,24 +124,7 @@ def _deterministic_parse_syllabus(raw_text: str) -> ParsedSyllabus:
             cleaned = re.sub(r"^[-*•\d.)]+\s*", "", ln).strip()
             if len(cleaned) < 4:
                 continue
-            if ":" in cleaned:
-                prefix, rest = cleaned.split(":", 1)
-                prefix_s = prefix.strip()
-                rest_s = rest.strip()
-                if 4 <= len(prefix_s) <= 45 and rest_s:
-                    # Keep concise high-signal detail from after colon (e.g. Banker's Algorithm, FIFO/OPT/LRU)
-                    short_rest = re.sub(r"\([^)]*\)", "", rest_s).strip()
-                    parts = [p.strip(" .") for p in short_rest.split(",") if len(p.strip()) >= 4]
-                    if len(parts) >= 2:
-                        current_topics.append(f"{prefix_s}: {', '.join(parts[:3])}"[:85])
-                    else:
-                        current_topics.append(f"{prefix_s}: {short_rest}"[:85].rstrip("."))
-                    continue
-            if len(cleaned) > 75 and "," in cleaned:
-                parts = [p.strip(" .") for p in cleaned.split(",") if len(p.strip()) >= 5]
-                current_topics.extend(parts[:3])
-            else:
-                current_topics.append(cleaned[:85].rstrip("."))
+            current_topics.append(cleaned[:95].rstrip("."))
 
     flush_unit()
 
