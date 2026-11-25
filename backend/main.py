@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from pydantic import BaseModel, Field
 
 from ingest import ingest_dual_pdfs, ingest_dual_texts, ingestion_engine
@@ -528,13 +529,9 @@ def email_summary_endpoint(req: EmailSummaryRequest) -> Dict[str, str]:
     if req.summary_data is None and not (req.full_markdown and req.full_markdown.strip()):
         raise HTTPException(status_code=400, detail="Summary content is required to send an email.")
 
+    brevo_api_key = os.getenv("BREVO_API_KEY", "").strip()
     smtp_email = os.getenv("SMTP_EMAIL", "").strip()
     smtp_password = os.getenv("SMTP_APP_PASSWORD", "").strip()
-    if not smtp_email or not smtp_password:
-        raise HTTPException(
-            status_code=400,
-            detail="Email delivery is not configured on the server (missing SMTP_EMAIL or SMTP_APP_PASSWORD in backend/.env).",
-        )
 
     plain_text = (
         (req.summary_data.full_markdown if req.summary_data else "")
@@ -542,6 +539,47 @@ def email_summary_endpoint(req: EmailSummaryRequest) -> Dict[str, str]:
         or req.subject_title
     )
     html_body = _render_summary_email_html(req.subject_title, req.summary_data, req.full_markdown)
+
+    if brevo_api_key:
+        if not smtp_email:
+            raise HTTPException(
+                status_code=400,
+                detail="Sender email is not configured on the server (missing SMTP_EMAIL for Brevo sender).",
+            )
+        try:
+            brevo_resp = httpx.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "api-key": brevo_api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "sender": {"name": "ExamPulse AI", "email": smtp_email},
+                    "to": [{"email": recipient}],
+                    "subject": f"ExamPulse AI — Master Revision Summary: {req.subject_title}",
+                    "htmlContent": html_body,
+                },
+                timeout=20.0,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to connect to Brevo API: {exc}",
+            ) from exc
+
+        if brevo_resp.status_code >= 400:
+            raise HTTPException(
+                status_code=brevo_resp.status_code if brevo_resp.status_code < 500 else 502,
+                detail=f"Brevo API error ({brevo_resp.status_code}): {brevo_resp.text}",
+            )
+
+        return {"status": "sent", "recipient": recipient}
+
+    if not smtp_email or not smtp_password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email delivery is not configured on the server (set BREVO_API_KEY + SMTP_EMAIL, or SMTP_EMAIL + SMTP_APP_PASSWORD).",
+        )
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"ExamPulse AI Revision Summary: {req.subject_title}"
