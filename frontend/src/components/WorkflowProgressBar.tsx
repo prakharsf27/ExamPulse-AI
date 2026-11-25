@@ -6,12 +6,13 @@ import {
   FileUp,
   ListOrdered,
   Loader2,
+  MailCheck,
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type WorkflowStageId = 1 | 2 | 3 | 4;
+export type WorkflowStageId = 1 | 2 | 3 | 4 | 5;
 
 interface WorkflowProgressBarProps {
   activeStep: WorkflowStageId;
@@ -51,6 +52,12 @@ const STEPS: {
     subtitle: "Notes, Quiz & Sheet",
     icon: Sparkles,
   },
+  {
+    id: 5,
+    label: "5. Subject Summary & Mail",
+    subtitle: "Master Brief & SMTP",
+    icon: MailCheck,
+  },
 ];
 
 export function WorkflowProgressBar({
@@ -62,7 +69,7 @@ export function WorkflowProgressBar({
 }: WorkflowProgressBarProps) {
   return (
     <div className="no-print sticky top-[65px] z-20 mb-6 rounded-2xl border border-[#1E3A8A]/15 bg-white/95 p-3 shadow-sm backdrop-blur-md">
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         {STEPS.map((step, idx) => {
           const Icon = step.icon;
           const isCompleted = completedSteps.has(step.id);
@@ -77,7 +84,7 @@ export function WorkflowProgressBar({
               disabled={!clickable}
               onClick={() => clickable && onSelectStep(step.id)}
               className={cn(
-                "relative flex items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all",
+                "relative flex items-center gap-2.5 rounded-xl border px-2.5 py-2 text-left transition-all",
                 isBusy
                   ? "border-[#E17055] bg-[#FDF3F0] ring-1 ring-[#E17055]"
                   : isActive
@@ -89,7 +96,7 @@ export function WorkflowProgressBar({
             >
               <div
                 className={cn(
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold",
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold",
                   isBusy
                     ? "bg-[#E17055] text-white"
                     : isActive
@@ -100,11 +107,11 @@ export function WorkflowProgressBar({
                 )}
               >
                 {isBusy ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : isCompleted && !isActive ? (
-                  <Check className="h-4 w-4 stroke-[2.5]" />
+                  <Check className="h-3.5 w-3.5 stroke-[2.5]" />
                 ) : (
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                 )}
               </div>
 
@@ -117,13 +124,13 @@ export function WorkflowProgressBar({
                 >
                   {step.label}
                 </div>
-                <div className="truncate text-[11px] text-slate-500">
+                <div className="truncate text-[10px] text-slate-500">
                   {stepMeta?.[step.id] || step.subtitle}
                 </div>
               </div>
 
               {idx < STEPS.length - 1 && (
-                <span className="hidden text-slate-300 lg:inline">→</span>
+                <span className="hidden text-slate-300 xl:inline">→</span>
               )}
             </button>
           );

@@ -12,6 +12,7 @@ import { UploadPanel } from "@/components/UploadPanel";
 import { ConstraintSidebar } from "@/components/ConstraintSidebar";
 import { PriorityStudyMap } from "@/components/PriorityStudyMap";
 import { StudyWorkspace } from "@/components/StudyWorkspace";
+import { SubjectSummaryView } from "@/components/SubjectSummaryView";
 import {
   WorkflowProgressBar,
   type WorkflowStageId,
@@ -21,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import {
   fetchBackendHealth,
   generateStudyPack,
+  generateSubjectSummary,
   ingestStudyFiles,
   loadDemoSession,
   prioritizeStudyPlan,
@@ -31,6 +33,7 @@ import type {
   LearningStyle,
   PrioritizeResponse,
   StudyPackResponse,
+  SubjectSummaryResponse,
 } from "@/types/exampulse";
 
 export default function ExamPulsePage() {
@@ -44,12 +47,14 @@ export default function ExamPulsePage() {
   const [priorityPlan, setPriorityPlan] = useState<PrioritizeResponse | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [studyPackCache, setStudyPackCache] = useState<Record<string, StudyPackResponse>>({});
+  const [subjectSummary, setSubjectSummary] = useState<SubjectSummaryResponse | null>(null);
   const [traceDrawerOpen, setTraceDrawerOpen] = useState<boolean>(false);
 
   const [isIngesting, setIsIngesting] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("");
   const [isPrioritizing, setIsPrioritizing] = useState(false);
   const [loadingTopicPack, setLoadingTopicPack] = useState<string | null>(null);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,6 +74,7 @@ export default function ExamPulsePage() {
       setPriorityPlan(null);
       setSelectedTopic(null);
       setStudyPackCache({});
+      setSubjectSummary(null);
       setActiveStep(2);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to ingest uploaded PDFs.");
@@ -93,6 +99,7 @@ export default function ExamPulsePage() {
       setPriorityPlan(null);
       setSelectedTopic(null);
       setStudyPackCache({});
+      setSubjectSummary(null);
       setActiveStep(2);
     } catch (err) {
       setError(
@@ -166,6 +173,31 @@ export default function ExamPulsePage() {
     }
   };
 
+  const handleOpenSubjectSummary = async (forceRefresh = false) => {
+    if (!session) return;
+    setActiveStep(5);
+    if (!forceRefresh && subjectSummary && subjectSummary.session_id === session.session_id) {
+      return;
+    }
+
+    setError(null);
+    setIsGeneratingSummary(true);
+    try {
+      const res = await generateSubjectSummary({
+        session_id: session.session_id,
+        learning_style: learningStyle,
+        hours_remaining: hoursRemaining,
+      });
+      setSubjectSummary(res);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to generate subject summary."
+      );
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
   const handleToggleTopic = (topic: string) => {
     setKnownTopics((prev) => {
       const next = new Set(prev);
@@ -185,6 +217,7 @@ export default function ExamPulsePage() {
     setPriorityPlan(null);
     setSelectedTopic(null);
     setStudyPackCache({});
+    setSubjectSummary(null);
     setTraceDrawerOpen(false);
     setError(null);
     setActiveStep(1);
@@ -199,13 +232,17 @@ export default function ExamPulsePage() {
   const completedSteps = new Set<WorkflowStageId>();
   if (session) completedSteps.add(1);
   if (priorityPlan) completedSteps.add(2);
-  if (priorityPlan && (activeStudyPack || selectedTopic)) completedSteps.add(3);
+  if (priorityPlan && (activeStudyPack || selectedTopic || subjectSummary)) {
+    completedSteps.add(3);
+  }
   if (activeStudyPack) completedSteps.add(4);
+  if (subjectSummary) completedSteps.add(5);
 
   let busyStep: WorkflowStageId | null = null;
   if (isIngesting) busyStep = 1;
   else if (isPrioritizing) busyStep = 2;
   else if (loadingTopicPack) busyStep = 4;
+  else if (isGeneratingSummary) busyStep = 5;
 
   const stepMeta: Partial<Record<WorkflowStageId, string>> = {
     1: session
@@ -218,8 +255,11 @@ export default function ExamPulsePage() {
       ? `${priorityPlan.prioritized_topics.length} topics ranked`
       : "PYQ Weightage Rank",
     4: activeStudyPack
-      ? `${activeStudyPack.generation_mode}`
+      ? `${activeStudyPack.notes_model || activeStudyPack.generation_mode}`
       : "Notes, Quiz & Sheet",
+    5: subjectSummary
+      ? `${subjectSummary.unit_keypoints.length} units summarized`
+      : "Master Brief & SMTP",
   };
 
   return (
@@ -330,7 +370,9 @@ export default function ExamPulsePage() {
             selectedTopic={selectedTopic}
             onSelectTopic={(topic) => handleOpenStudyPack(topic)}
             onEditConstraints={() => setActiveStep(2)}
+            onOpenSubjectSummary={() => handleOpenSubjectSummary()}
             isGeneratingTopic={loadingTopicPack}
+            isGeneratingSummary={isGeneratingSummary}
           />
         )}
 
@@ -342,8 +384,20 @@ export default function ExamPulsePage() {
             loadingTopic={loadingTopicPack}
             onRegenerate={(topic) => handleOpenStudyPack(topic, true)}
             onBackToPriority={() => setActiveStep(3)}
+            onOpenSubjectSummary={() => handleOpenSubjectSummary()}
+            isGeneratingSummary={isGeneratingSummary}
             traceDrawerOpen={traceDrawerOpen}
             onToggleTraceDrawer={setTraceDrawerOpen}
+          />
+        )}
+
+        {/* Step 5: Final Subject Summary & Email */}
+        {activeStep === 5 && (
+          <SubjectSummaryView
+            summary={subjectSummary}
+            isLoading={isGeneratingSummary}
+            onRegenerate={() => handleOpenSubjectSummary(true)}
+            onBack={() => setActiveStep(selectedTopic ? 4 : 3)}
           />
         )}
       </main>

@@ -88,6 +88,22 @@ class GeneratedQuizPack(BaseModel):
     quiz: List[QuizQuestion] = Field(..., min_length=3, max_length=5, description="5 PYQ-style MCQs grounded in the context")
 
 
+class UnitKeypoint(BaseModel):
+    unit: str
+    key_concepts: List[str] = Field(default_factory=list)
+    must_remember_formulas: List[str] = Field(default_factory=list)
+    exam_tip: str = ""
+
+
+class SubjectSummaryData(BaseModel):
+    subject_title: str
+    executive_overview: str
+    unit_keypoints: List[UnitKeypoint] = Field(default_factory=list)
+    high_probability_takeaways: List[str] = Field(default_factory=list)
+    last_15_min_checklist: List[str] = Field(default_factory=list)
+    full_markdown: str = ""
+
+
 class RetrievedSource(BaseModel):
     source: Literal["syllabus", "pyq"]
     paper_name: str
@@ -1033,3 +1049,199 @@ _builder.add_edge("retrieve_and_rerank_node", "generate_study_pack_node")
 _builder.add_edge("generate_study_pack_node", END)
 
 agentic_rag_graph = _builder.compile()
+
+
+# ---------------------------------------------------------------------------
+# Full Subject Summary Pipeline
+# ---------------------------------------------------------------------------
+
+
+def _build_summary_markdown(data: SubjectSummaryData) -> str:
+    lines = [
+        f"# Master Exam Revision Summary: {data.subject_title}",
+        "",
+        "## Executive Overview",
+        data.executive_overview,
+        "",
+        "## Unit-by-Unit Keypoints",
+    ]
+    for uk in data.unit_keypoints:
+        lines.append(f"### {uk.unit}")
+        if uk.key_concepts:
+            lines.append("**Key Concepts:**")
+            for kc in uk.key_concepts:
+                lines.append(f"- {kc}")
+        if uk.must_remember_formulas:
+            lines.append("**Must-Remember Formulas & Rules:**")
+            for fm in uk.must_remember_formulas:
+                lines.append(f"- `{fm}`")
+        if uk.exam_tip:
+            lines.append(f"> **Examiner Tip:** {uk.exam_tip}")
+        lines.append("")
+
+    if data.high_probability_takeaways:
+        lines.append("## High-Probability Exam Takeaways (PYQ-Driven)")
+        for item in data.high_probability_takeaways:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if data.last_15_min_checklist:
+        lines.append("## Last 15-Minute Exam Hall Checklist")
+        for item in data.last_15_min_checklist:
+            lines.append(f"- [ ] {item}")
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _fallback_subject_summary(
+    syllabus: ParsedSyllabus,
+    prioritized_topics: List[PrioritizedTopic],
+) -> SubjectSummaryData:
+    unit_keypoints: List[UnitKeypoint] = []
+    for unit in syllabus.units:
+        unit_label = f"{unit.unit_number}: {unit.unit_title}"
+        unit_keypoints.append(
+            UnitKeypoint(
+                unit=unit_label,
+                key_concepts=unit.topics[:5],
+                must_remember_formulas=[
+                    f"Core boundary rules & definitions for {unit.unit_title}"
+                ],
+                exam_tip=f"Expect direct PYQ numericals or comparisons from {unit.topics[0] if unit.topics else unit.unit_title}.",
+            )
+        )
+
+    top_topics = prioritized_topics[:6]
+    high_prob = [
+        f"{pt.topic} ({pt.priority_tier} — asked {pt.pyq_frequency}x in PYQs)"
+        for pt in top_topics
+    ] or [t for u in syllabus.units for t in u.topics[:2]][:6]
+
+    checklist = [
+        f"Verify equations, units, and edge cases for {pt.topic}"
+        for pt in top_topics[:5]
+    ] or [f"Review core concepts of {u.unit_title}" for u in syllabus.units]
+
+    data = SubjectSummaryData(
+        subject_title=syllabus.course_title,
+        executive_overview=(
+            f"{syllabus.course_title} spans {len(syllabus.units)} core units. "
+            "Focus first on high-frequency PYQ topics with multi-mark numericals and "
+            "verify key boundary conditions and comparison trade-offs before the exam."
+        ),
+        unit_keypoints=unit_keypoints,
+        high_probability_takeaways=high_prob,
+        last_15_min_checklist=checklist,
+    )
+    data.full_markdown = _build_summary_markdown(data)
+    return data
+
+
+def generate_subject_summary_pipeline(
+    session_id: str,
+    syllabus: ParsedSyllabus,
+    learning_style: LearningStyle,
+    hours_remaining: float,
+    prioritized_topics: Optional[List[PrioritizedTopic]] = None,
+) -> tuple[SubjectSummaryData, str]:
+    """Generate a master subject revision summary across all units grounded in Qdrant chunks."""
+    if not prioritized_topics:
+        all_topics = [t for u in syllabus.units for t in u.topics]
+        unit_map = {
+            t: f"{u.unit_number}: {u.unit_title}"
+            for u in syllabus.units
+            for t in u.topics
+        }
+        if all_topics:
+            prio_out = agentic_rag_graph.invoke(
+                {
+                    "action": "prioritize",
+                    "session_id": session_id,
+                    "unchecked_topics": all_topics,
+                    "topic_unit_map": unit_map,
+                    "hours_remaining": hours_remaining,
+                    "learning_style": learning_style,
+                    "workflow_trace": [],
+                }
+            )
+            prioritized_topics = prio_out.get("prioritized_topics", [])
+        else:
+            prioritized_topics = []
+
+    syl_docs = ingestion_engine.get_session_documents(session_id=session_id, source="syllabus", limit=8)
+    pyq_docs = ingestion_engine.get_session_documents(session_id=session_id, source="pyq", limit=8)
+
+    syllabus_outline = "\n".join(
+        f"- {u.unit_number}: {u.unit_title} -> {', '.join(u.topics)}"
+        for u in syllabus.units
+    )
+    top_pyq_summary = "\n".join(
+        f"- #{pt.priority_rank} {pt.topic} (Tier: {pt.priority_tier}, Asked {pt.pyq_frequency}x)"
+        for pt in (prioritized_topics or [])[:8]
+    )
+    context_text = _format_context(syl_docs[:5], pyq_docs[:5])
+
+    prompt_msgs = [
+        SystemMessage(
+            content=(
+                "You are ExamPulse AI. Generate a comprehensive, exam-ready Master Subject Summary "
+                "grounded strictly in the provided syllabus structure, PYQ rankings, and retrieved chunks. "
+                "Cover EVERY unit in the syllabus. Return ONLY valid JSON."
+            )
+        ),
+        HumanMessage(
+            content=(
+                f"Subject: {syllabus.course_title}\n"
+                f"Learning Style: {learning_style} | Hours Remaining: {hours_remaining}\n\n"
+                f"SYLLABUS STRUCTURE:\n{syllabus_outline}\n\n"
+                f"TOP PYQ-WEIGHTED TOPICS:\n{top_pyq_summary}\n\n"
+                f"{context_text}\n\n"
+                "Return ONLY a JSON object with exact keys:\n"
+                "{\n"
+                '  "subject_title": "string",\n'
+                '  "executive_overview": "3-4 sentence high-level summary of the entire subject",\n'
+                '  "unit_keypoints": [\n'
+                '    {"unit": "Unit X: Title", "key_concepts": ["..."], "must_remember_formulas": ["..."], "exam_tip": "..."}\n'
+                "  ],\n"
+                '  "high_probability_takeaways": ["5-7 rapid-recall PYQ-likely points"],\n'
+                '  "last_15_min_checklist": ["ultra-crisp exam-hall checklist items"]\n'
+                "}"
+            )
+        ),
+    ]
+
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        for groq_model in _get_groq_candidate_models(groq_key):
+            llm = _get_groq_llm(model_name=groq_model, temperature=0.2, timeout=30)
+            if llm is None:
+                continue
+            try:
+                resp = llm.invoke(prompt_msgs)
+                raw = _strip_json_fences(str(resp.content))
+                parsed_json = json.loads(raw)
+                parsed_data = SubjectSummaryData(**parsed_json)
+                if parsed_data.unit_keypoints:
+                    if not parsed_data.full_markdown:
+                        parsed_data.full_markdown = _build_summary_markdown(parsed_data)
+                    return parsed_data, f"Groq ({groq_model})"
+            except Exception as exc:
+                logger.warning("Groq subject summary (%s) failed (%s)", groq_model, exc)
+
+    gen_model = os.getenv("GEMINI_GENERATOR_MODEL", "gemini-3.5-flash-lite")
+    if gen_model == "gemini-3.8-flash":
+        gen_model = "gemini-3.5-flash-lite"
+    gemini_llm = _get_gemini_llm(gen_model, temperature=0.2, timeout=35)
+    if gemini_llm is not None:
+        try:
+            structured = gemini_llm.with_structured_output(SubjectSummaryData, method="json_schema")
+            parsed_data = structured.invoke(prompt_msgs)
+            if parsed_data and parsed_data.unit_keypoints:
+                if not parsed_data.full_markdown:
+                    parsed_data.full_markdown = _build_summary_markdown(parsed_data)
+                return parsed_data, f"Gemini ({gen_model})"
+        except Exception as exc:
+            logger.warning("Gemini subject summary (%s) failed (%s)", gen_model, exc)
+
+    return _fallback_subject_summary(syllabus, prioritized_topics or []), "Local Grounded Fallback"

@@ -1,13 +1,15 @@
 import type {
   BackendHealth,
+  EmailSummaryResponse,
   IngestResponse,
   LearningStyle,
   PrioritizeResponse,
   StudyPackResponse,
+  SubjectSummaryResponse,
 } from "@/types/exampulse";
 
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
 
 async function parseJsonOrThrow<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -82,4 +84,31 @@ export async function generateStudyPack(params: {
     body: JSON.stringify(params),
   });
   return parseJsonOrThrow<StudyPackResponse>(res);
+}
+
+export async function generateSubjectSummary(params: {
+  session_id: string;
+  learning_style: LearningStyle;
+  hours_remaining: number;
+}): Promise<SubjectSummaryResponse> {
+  const res = await fetch(`${API_BASE}/api/generate-subject-summary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return parseJsonOrThrow<SubjectSummaryResponse>(res);
+}
+
+export async function emailSubjectSummary(params: {
+  recipient_email: string;
+  subject_title: string;
+  summary_data: SubjectSummaryResponse;
+  full_markdown: string;
+}): Promise<EmailSummaryResponse> {
+  const res = await fetch(`${API_BASE}/api/email-summary`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return parseJsonOrThrow<EmailSummaryResponse>(res);
 }

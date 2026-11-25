@@ -9,6 +9,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
   BookOpen,
   Calculator,
   CheckCircle2,
@@ -30,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/controls";
+import { NotesAudioPlayer } from "@/components/NotesAudioPlayer";
 import { cn } from "@/lib/utils";
 import type { StudyPackResponse } from "@/types/exampulse";
 
@@ -39,6 +41,8 @@ interface StudyWorkspaceProps {
   loadingTopic: string | null;
   onRegenerate: (topic: string) => void;
   onBackToPriority: () => void;
+  onOpenSubjectSummary: () => void;
+  isGeneratingSummary?: boolean;
   traceDrawerOpen?: boolean;
   onToggleTraceDrawer?: (open: boolean) => void;
 }
@@ -49,6 +53,8 @@ export function StudyWorkspace({
   loadingTopic,
   onRegenerate,
   onBackToPriority,
+  onOpenSubjectSummary,
+  isGeneratingSummary = false,
   traceDrawerOpen,
   onToggleTraceDrawer,
 }: StudyWorkspaceProps) {
@@ -212,6 +218,24 @@ export function StudyWorkspace({
                 <RefreshCw className="h-3.5 w-3.5" />
                 Refresh
               </Button>
+              <Button
+                variant="accent"
+                size="sm"
+                disabled={isGeneratingSummary}
+                onClick={onOpenSubjectSummary}
+              >
+                {isGeneratingSummary ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    Finish &amp; View Full Subject Summary
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 
@@ -331,6 +355,7 @@ export function StudyWorkspace({
 
             {/* Tab 1: Tailored Notes */}
             <TabsContent value="notes" className="no-print">
+              <NotesAudioPlayer text={studyPack.summary} title={studyPack.topic} />
               <div className="prose prose-slate max-w-none rounded-xl border border-slate-200/80 bg-[#FFFCF5] p-5 sm:p-6 prose-headings:text-[#1E3A8A] prose-strong:text-slate-900 prose-code:rounded prose-code:bg-slate-100 prose-code:px-1 prose-code:text-[#C85A40] prose-table:text-xs prose-th:bg-slate-100 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}

@@ -123,3 +123,26 @@ export interface BackendHealth {
   gemini_configured: boolean;
   groq_configured: boolean;
 }
+
+export interface UnitKeypoint {
+  unit: string;
+  key_concepts: string[];
+  must_remember_formulas: string[];
+  exam_tip: string;
+}
+
+export interface SubjectSummaryResponse {
+  session_id: string;
+  subject_title: string;
+  executive_overview: string;
+  unit_keypoints: UnitKeypoint[];
+  high_probability_takeaways: string[];
+  last_15_min_checklist: string[];
+  full_markdown: string;
+  model_used: string;
+}
+
+export interface EmailSummaryResponse {
+  status: string;
+  recipient: string;
+}

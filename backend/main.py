@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import html
 import logging
 import os
+import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -16,10 +21,13 @@ from workflow import (
     PrioritizedTopic,
     QuizQuestion,
     RetrievedSource,
+    SubjectSummaryData,
     TwistedQuestion,
+    UnitKeypoint,
     WorkedExample,
     WorkflowTraceEntry,
     agentic_rag_graph,
+    generate_subject_summary_pipeline,
     make_trace,
 )
 
@@ -73,6 +81,30 @@ class StudyPackResponse(BaseModel):
     workflow_trace: List[WorkflowTraceEntry] = Field(default_factory=list)
     notes_model: str = "Groq"
     generation_mode: str = "grounded-local-fallback"
+
+
+class SubjectSummaryRequest(BaseModel):
+    session_id: str
+    learning_style: LearningStyle = "Conceptual"
+    hours_remaining: float = Field(default=8.0, ge=0.5, le=72.0)
+
+
+class SubjectSummaryResponse(BaseModel):
+    session_id: str
+    subject_title: str
+    executive_overview: str
+    unit_keypoints: List[UnitKeypoint]
+    high_probability_takeaways: List[str]
+    last_15_min_checklist: List[str]
+    full_markdown: str
+    model_used: str
+
+
+class EmailSummaryRequest(BaseModel):
+    recipient_email: str
+    subject_title: str
+    summary_data: Optional[SubjectSummaryData] = None
+    full_markdown: Optional[str] = None
 
 
 DEMO_OS_SYLLABUS = """
@@ -148,10 +180,14 @@ cors_origins = [
     for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
     if o.strip()
 ]
+frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+if frontend_url and frontend_url not in cors_origins:
+    cors_origins.append(frontend_url)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins or ["http://localhost:3000"],
+    allow_origins=cors_origins or ["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -323,6 +359,7 @@ def prioritize_endpoint(req: PrioritizeRequest) -> PrioritizeResponse:
     )
 
     session["priority_trace"] = graph_out["workflow_trace"]
+    session["prioritized_topics"] = graph_out["prioritized_topics"]
 
     return PrioritizeResponse(
         session_id=req.session_id,
@@ -368,3 +405,164 @@ def generate_study_pack_endpoint(req: StudyPackRequest) -> StudyPackResponse:
         notes_model=graph_out.get("notes_model", "Gemini (gemini-3.5-flash-lite)"),
         generation_mode=graph_out.get("generation_mode", "grounded-local-fallback"),
     )
+
+
+@app.post("/api/generate-subject-summary", response_model=SubjectSummaryResponse)
+def generate_subject_summary_endpoint(req: SubjectSummaryRequest) -> SubjectSummaryResponse:
+    session = SESSION_STORE.get(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found. Upload PDFs or load demo first.")
+
+    summary_data, model_used = generate_subject_summary_pipeline(
+        session_id=req.session_id,
+        syllabus=session["syllabus"],
+        learning_style=req.learning_style,
+        hours_remaining=req.hours_remaining,
+        prioritized_topics=session.get("prioritized_topics"),
+    )
+
+    return SubjectSummaryResponse(
+        session_id=req.session_id,
+        subject_title=summary_data.subject_title,
+        executive_overview=summary_data.executive_overview,
+        unit_keypoints=summary_data.unit_keypoints,
+        high_probability_takeaways=summary_data.high_probability_takeaways,
+        last_15_min_checklist=summary_data.last_15_min_checklist,
+        full_markdown=summary_data.full_markdown,
+        model_used=model_used,
+    )
+
+
+def _render_summary_email_html(
+    subject_title: str,
+    summary_data: Optional[SubjectSummaryData],
+    full_markdown: Optional[str],
+) -> str:
+    esc = html.escape
+    if summary_data is None:
+        body_text = esc(full_markdown or "").replace("\n", "<br/>")
+        return f"""
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 680px; margin: 0 auto; background: #FFFCF5; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden;">
+          <div style="background: #1E3A8A; color: #ffffff; padding: 24px;">
+            <h1 style="margin: 0; font-size: 20px;">ExamPulse AI — Master Revision Summary</h1>
+            <p style="margin: 6px 0 0; color: #DBEAFE; font-size: 14px;">{esc(subject_title)}</p>
+          </div>
+          <div style="padding: 24px; color: #0F172A; font-size: 14px; line-height: 1.6;">{body_text}</div>
+        </div>
+        """
+
+    units_html = []
+    for uk in summary_data.unit_keypoints:
+        concepts_li = "".join(
+            f"<li style='margin-bottom:4px;'>{esc(c)}</li>" for c in uk.key_concepts
+        )
+        formulas_pills = "".join(
+            f"<span style='display:inline-block; background:#EEF2FF; color:#1E3A8A; border:1px solid #C7D2FE; border-radius:6px; padding:3px 8px; margin:3px 4px 3px 0; font-family:monospace; font-size:12px;'>{esc(f)}</span>"
+            for f in uk.must_remember_formulas
+        )
+        tip_block = (
+            f"<div style='margin-top:10px; padding:8px 12px; background:#FDF3F0; border-left:3px solid #E17055; color:#9C3E27; font-size:12px;'><strong>Examiner Tip:</strong> {esc(uk.exam_tip)}</div>"
+            if uk.exam_tip
+            else ""
+        )
+        units_html.append(
+            f"""
+            <div style="background:#ffffff; border:1px solid #E2E8F0; border-radius:10px; padding:16px; margin-bottom:14px;">
+              <h3 style="margin:0 0 10px; color:#1E3A8A; font-size:15px;">{esc(uk.unit)}</h3>
+              <ul style="margin:0 0 8px; padding-left:18px; color:#334155; font-size:13px;">{concepts_li}</ul>
+              {f"<div style='margin-top:8px;'>{formulas_pills}</div>" if formulas_pills else ""}
+              {tip_block}
+            </div>
+            """
+        )
+
+    takeaways_li = "".join(
+        f"<li style='margin-bottom:6px;'>{esc(t)}</li>"
+        for t in summary_data.high_probability_takeaways
+    )
+    checklist_li = "".join(
+        f"<li style='margin-bottom:6px;'>&#9744; {esc(c)}</li>"
+        for c in summary_data.last_15_min_checklist
+    )
+
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 700px; margin: 0 auto; background: #FFFCF5; border: 1px solid #E2E8F0; border-radius: 14px; overflow: hidden;">
+      <div style="background: #1E3A8A; color: #ffffff; padding: 24px 28px;">
+        <div style="font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #FDBA74; font-weight: 700;">ExamPulse AI · Last-Minute Revision Brief</div>
+        <h1 style="margin: 6px 0 0; font-size: 22px;">{esc(summary_data.subject_title or subject_title)}</h1>
+      </div>
+
+      <div style="padding: 24px 28px; color: #0F172A;">
+        <div style="background: #ffffff; border: 1px solid #E2E8F0; border-radius: 10px; padding: 16px; margin-bottom: 18px;">
+          <h2 style="margin: 0 0 8px; color: #1E3A8A; font-size: 15px;">Executive Overview</h2>
+          <p style="margin: 0; color: #334155; font-size: 13.5px; line-height: 1.6;">{esc(summary_data.executive_overview)}</p>
+        </div>
+
+        <h2 style="margin: 0 0 12px; color: #1E3A8A; font-size: 16px;">Unit-by-Unit Keypoints</h2>
+        {"".join(units_html)}
+
+        <div style="background: #EEF2FF; border: 1px solid #C7D2FE; border-radius: 10px; padding: 16px; margin-top: 18px;">
+          <h2 style="margin: 0 0 8px; color: #1E3A8A; font-size: 15px;">High-Probability Exam Takeaways</h2>
+          <ul style="margin: 0; padding-left: 18px; color: #1E293B; font-size: 13px;">{takeaways_li}</ul>
+        </div>
+
+        <div style="background: #FDF3F0; border: 1px solid #FADFD7; border-radius: 10px; padding: 16px; margin-top: 14px;">
+          <h2 style="margin: 0 0 8px; color: #C85A40; font-size: 15px;">Last 15-Minute Exam Hall Checklist</h2>
+          <ul style="margin: 0; padding-left: 18px; list-style: none; color: #1E293B; font-size: 13px;">{checklist_li}</ul>
+        </div>
+      </div>
+
+      <div style="background: #F8FAFC; padding: 14px 28px; text-align: center; color: #64748B; font-size: 11px; border-top: 1px solid #E2E8F0;">
+        Generated by ExamPulse AI · Syllabus-Grounded Agentic RAG
+      </div>
+    </div>
+    """
+
+
+@app.post("/api/email-summary")
+def email_summary_endpoint(req: EmailSummaryRequest) -> Dict[str, str]:
+    recipient = req.recipient_email.strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", recipient):
+        raise HTTPException(status_code=400, detail="Please enter a valid recipient email address.")
+
+    if req.summary_data is None and not (req.full_markdown and req.full_markdown.strip()):
+        raise HTTPException(status_code=400, detail="Summary content is required to send an email.")
+
+    smtp_email = os.getenv("SMTP_EMAIL", "").strip()
+    smtp_password = os.getenv("SMTP_APP_PASSWORD", "").strip()
+    if not smtp_email or not smtp_password:
+        raise HTTPException(
+            status_code=400,
+            detail="Email delivery is not configured on the server (missing SMTP_EMAIL or SMTP_APP_PASSWORD in backend/.env).",
+        )
+
+    plain_text = (
+        (req.summary_data.full_markdown if req.summary_data else "")
+        or req.full_markdown
+        or req.subject_title
+    )
+    html_body = _render_summary_email_html(req.subject_title, req.summary_data, req.full_markdown)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"ExamPulse AI Revision Summary: {req.subject_title}"
+    msg["From"] = f"ExamPulse AI <{smtp_email}>"
+    msg["To"] = recipient
+    msg.attach(MIMEText(plain_text, "plain", "utf-8"))
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
+            server.login(smtp_email, smtp_password)
+            server.sendmail(smtp_email, [recipient], msg.as_string())
+    except smtplib.SMTPAuthenticationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Gmail SMTP authentication failed. Verify SMTP_EMAIL and your 16-character Gmail App Password.",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send email via Gmail SMTP: {exc}",
+        ) from exc
+
+    return {"status": "sent", "recipient": recipient}

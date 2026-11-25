@@ -23,7 +23,9 @@ interface PriorityStudyMapProps {
   selectedTopic: string | null;
   onSelectTopic: (topic: string) => void;
   onEditConstraints: () => void;
+  onOpenSubjectSummary: () => void;
   isGeneratingTopic: string | null;
+  isGeneratingSummary?: boolean;
 }
 
 function tierTone(tier: PriorityTier): "coral" | "navy" | "amber" | "slate" {
@@ -44,7 +46,9 @@ export function PriorityStudyMap({
   selectedTopic,
   onSelectTopic,
   onEditConstraints,
+  onOpenSubjectSummary,
   isGeneratingTopic,
+  isGeneratingSummary = false,
 }: PriorityStudyMapProps) {
   const [expandedPyq, setExpandedPyq] = useState<string | null>(null);
   const [showAllTopics, setShowAllTopics] = useState(false);
@@ -72,15 +76,34 @@ export function PriorityStudyMap({
               <p className="text-xs text-slate-600">{plan.strategy_note}</p>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onEditConstraints}
-              className="shrink-0"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Edit Constraints
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onEditConstraints}
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Edit Constraints
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={isGeneratingSummary}
+                onClick={onOpenSubjectSummary}
+              >
+                {isGeneratingSummary ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Building Summary...
+                  </>
+                ) : (
+                  <>
+                    Finish &amp; View Full Subject Summary
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </CardHeader>
       </Card>
