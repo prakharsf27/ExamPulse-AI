@@ -1,0 +1,183 @@
+{
+  "demo-88f8fed9": {
+    "session_id": "demo-88f8fed9",
+    "is_demo": true,
+    "syllabus": {
+      "course_title": "CS-302: OPERATING SYSTEMS \u2014 PRESCRIBED UNIVERSITY SYLLABUS",
+      "units": [
+        {
+          "unit_number": "Unit 1",
+          "unit_title": "Process Management & CPU Scheduling",
+          "topics": [
+            "Process Concept",
+            "Process Control Block (PCB)",
+            "Process States (New",
+            "CPU Scheduling Criteria",
+            "Preemptive vs Non-Preemptive Scheduling Algorithms"
+          ]
+        },
+        {
+          "unit_number": "Unit 2",
+          "unit_title": "Process Synchronization & Deadlocks",
+          "topics": [
+            "Race Conditions",
+            "Critical Section Problem Requirements (Mutual Exclusion",
+            "Progress",
+            "Semaphores (Counting & Binary)",
+            "Mutex Locks",
+            "Classic Synchronization Problems (Bounded Buffer / Producer-Consumer",
+            "Deadlock Characterization (4 Coffman Conditions",
+            "Deadlock Handling"
+          ]
+        },
+        {
+          "unit_number": "Unit 3",
+          "unit_title": "Memory Management & Paging",
+          "topics": [
+            "Logical vs Physical Address Space",
+            "Memory Management Unit (MMU)",
+            "Dynamic Relocation",
+            "Contiguous Memory Allocation",
+            "Paging Hardware",
+            "Multi-level Paging",
+            "Inverted Page Tables",
+            "Segmentation and Paged Segmentation"
+          ]
+        },
+        {
+          "unit_number": "Unit 4",
+          "unit_title": "Virtual Memory & Disk Scheduling",
+          "topics": [
+            "Virtual Memory Concepts",
+            "Demand Paging",
+            "Valid-Invalid Bit",
+            "Page Replacement Algorithms",
+            "Allocation of Frames, Thrashing and Working Set Model (Delta window)",
+            "Secondary Storage & Disk Scheduling Algorithms"
+          ]
+        }
+      ]
+    },
+    "stats": {
+      "syllabus_chunks": 4,
+      "pyq_chunks": 9,
+      "pyq_files": [
+        "OS_PYQ_2025_EndSem.pdf",
+        "OS_PYQ_2024_EndSem.pdf",
+        "OS_PYQ_2023_EndSem.pdf",
+        "OS_PYQ_2022_EndSem.pdf"
+      ],
+      "qdrant_mode": "memory",
+      "is_demo": true
+    }
+  },
+  "demo-592de4f1": {
+    "session_id": "demo-592de4f1",
+    "is_demo": true,
+    "syllabus": {
+      "course_title": "CS-302: OPERATING SYSTEMS \u2014 PRESCRIBED UNIVERSITY SYLLABUS",
+      "units": [
+        {
+          "unit_number": "Unit 1",
+          "unit_title": "Process Management & CPU Scheduling",
+          "topics": [
+            "Process Concept",
+            "Process Control Block (PCB)",
+            "Process States (New",
+            "CPU Scheduling Criteria: CPU Utilization, Throughput, Turnaround Time",
+            "Preemptive vs Non-Preemptive Scheduling Algorithms: First-Come First-Served (FCFS) and Convoy Effect",
+            "Shortest Job First (SJF)",
+            "Shortest Remaining Time First (SRTF)"
+          ]
+        },
+        {
+          "unit_number": "Unit 2",
+          "unit_title": "Process Synchronization & Deadlocks",
+          "topics": [
+            "Race Conditions",
+            "Critical Section Problem Requirements (Mutual Exclusion",
+            "Progress",
+            "Semaphores (Counting & Binary)",
+            "Mutex Locks",
+            "Classic Synchronization Problems (Bounded Buffer / Producer-Consumer",
+            "Deadlock Characterization (4 Coffman Conditions: Mutual Exclusion",
+            "Hold and Wait",
+            "No Preemption",
+            "Deadlock Handling: Prevention, Avoidance using Banker's Algorithm, Deadlock Detection"
+          ]
+        },
+        {
+          "unit_number": "Unit 3",
+          "unit_title": "Memory Management & Paging",
+          "topics": [
+            "Logical vs Physical Address Space",
+            "Memory Management Unit (MMU)",
+            "Dynamic Relocation",
+            "Contiguous Memory Allocation: Fixed & Variable Partitioning, Allocation Strategies, I",
+            "Paging Hardware: Page Number  and Page Offset, Page Table, Translation Lookaside Buff",
+            "Multi-level Paging",
+            "Inverted Page Tables",
+            "Segmentation and Paged Segmentation"
+          ]
+        },
+        {
+          "unit_number": "Unit 4",
+          "unit_title": "Virtual Memory & Disk Scheduling",
+          "topics": [
+            "Virtual Memory Concepts",
+            "Demand Paging",
+            "Valid-Invalid Bit",
+            "Page Replacement Algorithms: FIFO, Optimal Page Replacement, Least Recently Used",
+            "Allocation of Frames, Thrashing and Working Set Model (Delta window)",
+            "Secondary Storage & Disk Scheduling Algorithms: Seek Time",
+            "Rotational Latency",
+            "Transfer Time"
+          ]
+        }
+      ]
+    },
+    "stats": {
+      "syllabus_chunks": 4,
+      "pyq_chunks": 9,
+      "pyq_files": [
+        "OS_PYQ_2025_EndSem.pdf",
+        "OS_PYQ_2024_EndSem.pdf",
+        "OS_PYQ_2023_EndSem.pdf",
+        "OS_PYQ_2022_EndSem.pdf"
+      ],
+      "qdrant_mode": "memory",
+      "is_demo": true
+    }
+  },
+  "dfbad542-b729-40f4-9726-3858740dfbe4": {
+    "session_id": "dfbad542-b729-40f4-9726-3858740dfbe4",
+    "is_demo": false,
+    "syllabus": {
+      "course_title": "CS401 Computer Networks",
+      "units": [
+        {
+          "unit_number": "Unit 1",
+          "unit_title": "Transport Layer",
+          "topics": [
+            "TCP Congestion Control and Slow Start",
+            "UDP Header and Checksum"
+          ]
+        },
+        {
+          "unit_number": "Unit 2",
+          "unit_title": "Network Layer",
+          "topics": [
+            "Dijkstra Shortest Path Routing"
+          ]
+        }
+      ]
+    },
+    "stats": {
+      "syllabus_chunks": 1,
+      "pyq_chunks": 1,
+      "pyq_files": [
+        "cn_pyq_2024.pdf"
+      ]
+    }
+  }
+}
