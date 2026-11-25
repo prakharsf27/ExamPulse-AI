@@ -121,7 +121,7 @@ class QdrantIngestionEngine:
             candidate_models = [
                 os.getenv("GEMINI_EMBEDDING_MODEL", "").strip(),
                 "models/gemini-embedding-001",
-                "models/text-embedding-004",
+                "models/gemini-embedding-001",
             ]
             for emb_model in [m for m in candidate_models if m]:
                 try:
